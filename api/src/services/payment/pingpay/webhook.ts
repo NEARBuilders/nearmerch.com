@@ -127,12 +127,22 @@ export function handlePingPayWebhookEffect(options: {
               return { success: true } as const;
             }),
             Effect.catchAll((error) => {
-              console.error('[PingPay Webhook] Order confirmation failed', {
-                providerName,
-                draftId,
-                error: error.message,
-              });
-              return Effect.succeed({ success: false as const, error: error.message });
+              const errorMsg = error.message || String(error);
+              const isCostCalculationPending = /calculat|cost.*pending|not.*possible.*confirm/i.test(errorMsg);
+              if (isCostCalculationPending) {
+                console.warn('[PingPay Webhook] Order confirmation failed — Printful costs still calculating. Order will remain in paid_pending_fulfillment for retry job.', {
+                  providerName,
+                  draftId,
+                  error: errorMsg,
+                });
+              } else {
+                console.error('[PingPay Webhook] Order confirmation failed', {
+                  providerName,
+                  draftId,
+                  error: errorMsg,
+                });
+              }
+              return Effect.succeed({ success: false as const, error: errorMsg, isCostCalculationPending });
             })
           );
 

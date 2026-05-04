@@ -6,6 +6,7 @@ import { ORPCError } from 'every-plugin/orpc';
 import { z } from 'every-plugin/zod';
 import { contract } from './contract';
 import { cleanupAbandonedDrafts } from './jobs/cleanup-drafts';
+import { retryPendingConfirmations } from './jobs/retry-confirmations';
 import { createMarketplaceRuntime } from './runtime';
 import { ReturnAddressSchema, type ConfigureWebhookOutput, type OrderStatus, type PrintfulWebhookEventType, type ProductMetadata, type ProviderWebhookEventType, type TrackingInfo } from './schema';
 import { CheckoutService, CheckoutServiceLive } from './services/checkout';
@@ -1310,7 +1311,7 @@ export default createPlugin({
               return { received: true };
             }
 
-            const { newStatus, newTracking } = computePrintfulUpdate({
+            const { newStatus, newTracking, shouldRetryConfirmation } = computePrintfulUpdate({
               eventType,
               data,
               currentStatus: order.status,
@@ -1330,6 +1331,49 @@ export default createPlugin({
                   );
                 }),
               );
+            }
+
+            if (shouldRetryConfirmation && order) {
+              const draftOrderIds = order.draftOrderIds || {};
+              if (Object.keys(draftOrderIds).length > 0) {
+                console.log('[Printful Webhook] Retrying draft order confirmation', { orderId: order.id, draftOrderIds });
+                const confirmationResults: Record<string, { success: boolean; error?: string }> = {};
+                for (const [providerName, draftId] of Object.entries(draftOrderIds)) {
+                  if (providerName === 'manual') continue;
+                  const provider = runtime.getProvider(providerName);
+                  if (!provider) {
+                    confirmationResults[providerName] = { success: false, error: 'Provider not configured' };
+                    continue;
+                  }
+                  try {
+                    await managedRuntime.runPromise(
+                      Effect.tryPromise({
+                        try: () => provider.client.confirmOrder({ id: draftId as string }),
+                        catch: (e) => new Error(`Failed to confirm: ${e instanceof Error ? e.message : String(e)}`),
+                      }).pipe(Effect.retry({ times: 3, schedule: Schedule.exponential('100 millis') })),
+                    );
+                    confirmationResults[providerName] = { success: true };
+                  } catch (error) {
+                    const errorMsg = error instanceof Error ? error.message : String(error);
+                    console.warn('[Printful Webhook] Confirmation retry failed', { providerName, draftId, error: errorMsg });
+                    confirmationResults[providerName] = { success: false, error: errorMsg };
+                  }
+                }
+                const allSuccess = Object.values(confirmationResults).every((r) => r.success);
+                const finalStatus = allSuccess ? 'processing' : 'paid_pending_fulfillment';
+                await managedRuntime.runPromise(
+                  Effect.gen(function* () {
+                    const store = yield* OrderStore;
+                    yield* store.updateStatus(
+                      order.id,
+                      finalStatus,
+                      'service:printful',
+                      `fulfillment:retry_${allSuccess ? 'confirmed' : 'partial'}`,
+                      { confirmationResults, allSuccess },
+                    );
+                  }),
+                );
+              }
             }
 
             if (newTracking && order) {
@@ -1553,6 +1597,36 @@ export default createPlugin({
           const maxAgeHours = input?.maxAgeHours || 24;
           const exit = await managedRuntime.runPromiseExit(
             cleanupAbandonedDrafts(runtime, maxAgeHours),
+          );
+
+          if (Exit.isFailure(exit)) {
+            const error = Cause.squash(exit.cause);
+            if (error instanceof ORPCError) {
+              throw error;
+            }
+            throw new ORPCError("INTERNAL_SERVER_ERROR", {
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+
+          return exit.value;
+        },
+      ),
+
+      retryPendingConfirmations: builder.retryPendingConfirmations.handler(
+        async ({ input, context }) => {
+          const cronSecret = context.reqHeaders?.get("x-cron-secret");
+          const expectedSecret = process.env.CRON_SECRET;
+
+          if (!expectedSecret || cronSecret !== expectedSecret) {
+            throw new ORPCError("UNAUTHORIZED", {
+              message: "Invalid or missing cron secret",
+            });
+          }
+
+          const olderThanMinutes = input?.olderThanMinutes || 5;
+          const exit = await managedRuntime.runPromiseExit(
+            retryPendingConfirmations(runtime, olderThanMinutes),
           );
 
           if (Exit.isFailure(exit)) {

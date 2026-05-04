@@ -381,6 +381,31 @@ export class PrintfulService {
           tax_number: input.recipient.taxId,
         };
 
+        const itemsWithMissingTechnique = input.items.filter(item =>
+          (item.files || []).some((df: any) => !df.metadata?.technique),
+        );
+        const catalogProductsByProductId = new Map<number, {
+          placementTechniques?: Record<string, string>;
+          primaryPlacement?: { name: string; technique: string };
+        } | null>();
+
+        if (itemsWithMissingTechnique.length > 0) {
+          const productIds = new Set<number>();
+          for (const item of itemsWithMissingTechnique) {
+            const config = item.providerConfig as { catalogProductId?: number };
+            if (config?.catalogProductId) productIds.add(config.catalogProductId);
+          }
+          for (const productId of productIds) {
+            if (!catalogProductsByProductId.has(productId)) {
+              const catalogProduct = await this.client.getCatalogProduct(productId);
+              catalogProductsByProductId.set(productId, catalogProduct);
+              if (!catalogProduct) {
+                console.warn(`[PrintfulService.createOrder] Catalog product ${productId} not available — cannot resolve missing techniques`);
+              }
+            }
+          }
+        }
+
         const orderItems = input.items.map(item => {
           const config = item.providerConfig as {
             catalogVariantId?: number;
@@ -396,18 +421,52 @@ export class PrintfulService {
           }
 
           const placements = (item.files || [])
-            .filter((df: any) => df.metadata?.technique)
-            .map((df: any) => ({
-              placement: df.slot,
-              technique: df.metadata.technique,
-              layers: [{ type: 'file' as const, url: df.url }],
+            .filter((df: any) => df.url)
+            .map((df: any) => {
+              const slot = df.slot || 'default';
+              let technique = df.metadata?.technique as string | undefined;
+
+              if (!technique) {
+                const catalogProduct = catalogProductsByProductId.get(config.catalogProductId!) ?? null;
+                if (slot === 'default') {
+                  technique = catalogProduct?.primaryPlacement?.technique;
+                } else {
+                  technique = catalogProduct?.placementTechniques?.[slot]
+                    ?? catalogProduct?.primaryPlacement?.technique;
+                }
+                if (technique) {
+                  console.info(`[PrintfulService.createOrder] Resolved technique "${technique}" for placement "${slot}" from catalog product ${config.catalogProductId}`);
+                } else {
+                  console.warn(`[PrintfulService.createOrder] Could not resolve technique for placement "${slot}" on catalog product ${config.catalogProductId} — file will be skipped`);
+                }
+              }
+
+              return {
+                placement: slot,
+                technique,
+                url: df.url,
+              };
+            })
+            .filter((p): p is { placement: string; technique: string; url: string } => !!p.technique)
+            .map(p => ({
+              placement: p.placement,
+              technique: p.technique,
+              layers: [{ type: 'file' as const, url: p.url }],
             }));
+
+          if (placements.length === 0) {
+            throw new FulfillmentError({
+              message: `No valid placements for catalog variant ${catalogVariantId} — design files are missing or technique could not be resolved. Ensure product was synced with catalog placement data.`,
+              code: 'INVALID_REQUEST',
+              provider: 'printful',
+            });
+          }
 
           return {
             source: 'catalog' as const,
             catalog_variant_id: catalogVariantId,
             quantity: item.quantity,
-            ...(placements.length > 0 ? { placements } : {}),
+            placements,
           };
         });
 
@@ -700,6 +759,11 @@ export class PrintfulService {
         let catalogProduct: Awaited<ReturnType<typeof this.client.getCatalogProduct>> = null;
         if (catalogProductId) {
           catalogProduct = await this.client.getCatalogProduct(catalogProductId);
+          if (!catalogProduct) {
+            console.warn(`[PrintfulService.syncProducts] Catalog product ${catalogProductId} not available for "${sync_product.name}" — placement/technique data will be missing. Orders for these variants will resolve techniques at creation time.`);
+          }
+        } else {
+          console.warn(`[PrintfulService.syncProducts] No catalogProductId found for "${sync_product.name}" — placement/technique data will be missing.`);
         }
 
         yield {
@@ -781,8 +845,13 @@ export class PrintfulService {
     catalogPlacements: {
       placementTechniques?: Record<string, string>;
       primaryPlacement?: { name: string; technique: string };
-    } | null
+    } | null,
+    syncProductName?: string
   ): FulfillmentFile[] {
+    if (!catalogPlacements) {
+      console.warn(`[PrintfulService.extractDesignFiles] No catalog placement data for "${syncProductName ?? 'unknown'}" — technique metadata will be missing. Orders for these variants will need to resolve techniques at creation time.`);
+    }
+
     const bySlot = new Map<string, { file: typeof files[number]; slot: string; technique: string | null; resolvedUrl: string }>();
 
     for (const f of files) {
@@ -800,7 +869,7 @@ export class PrintfulService {
         slot = type;
         technique = catalogPlacements.placementTechniques[type];
       } else {
-        slot = type;
+        slot = type || 'default';
         technique = catalogPlacements?.placementTechniques?.[slot] ?? null;
       }
 
@@ -808,6 +877,10 @@ export class PrintfulService {
 
       const resolvedUrl = f.url || f.preview_url || f.thumbnail_url || null;
       if (!resolvedUrl) continue;
+
+      if (!technique) {
+        console.warn(`[PrintfulService.extractDesignFiles] No technique resolved for file ${f.id} (type="${type}", slot="${slot}") on "${syncProductName ?? 'unknown'}" — this will need resolution at order time`);
+      }
 
       bySlot.set(slot, { file: f, slot, technique, resolvedUrl });
     }
@@ -861,7 +934,7 @@ export class PrintfulService {
         optionsMap.get('Color')!.add(catalogVariant.color);
       }
 
-      const designFiles = this.extractDesignFiles(v.files, catalogProduct);
+      const designFiles = this.extractDesignFiles(v.files, catalogProduct, syncProduct.name);
 
       const fulfillmentConfig: FulfillmentConfig = {
         providerName: 'printful',

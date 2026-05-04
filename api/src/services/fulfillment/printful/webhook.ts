@@ -69,11 +69,12 @@ export function computePrintfulUpdate(options: {
   eventType: string;
   data: PrintfulWebhookPayload['data'] | undefined;
   currentStatus: OrderStatus;
-}): { newStatus?: OrderStatus; newTracking?: TrackingInfo[] } {
+}): { newStatus?: OrderStatus; newTracking?: TrackingInfo[]; shouldRetryConfirmation?: boolean } {
   const { eventType, data, currentStatus } = options;
 
   let newStatus: OrderStatus | undefined;
   let newTracking: TrackingInfo[] | undefined;
+  let shouldRetryConfirmation = false;
 
   switch (eventType) {
     case 'order_created':
@@ -89,8 +90,14 @@ export function computePrintfulUpdate(options: {
           newStatus = 'shipped';
           break;
         case 'pending':
+        case 'inprocess':
           if (currentStatus === 'paid' || currentStatus === 'paid_pending_fulfillment') {
             newStatus = 'processing';
+          }
+          break;
+        case 'draft':
+          if (currentStatus === 'paid_pending_fulfillment') {
+            shouldRetryConfirmation = true;
           }
           break;
         case 'canceled':
@@ -173,5 +180,5 @@ export function computePrintfulUpdate(options: {
       break;
   }
 
-  return { newStatus, newTracking };
+  return { newStatus, newTracking, shouldRetryConfirmation };
 }

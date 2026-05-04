@@ -20,6 +20,7 @@ export class OrderStore extends Context.Tag("OrderStore")<
     readonly findByCheckoutSession: (checkoutSessionId: string) => Effect.Effect<OrderWithItems | null, Error>;
     readonly findByFulfillmentRef: (fulfillmentReferenceId: string) => Effect.Effect<OrderWithItems | null, Error>;
     readonly findAbandonedDrafts: (olderThanHours: number) => Effect.Effect<OrderWithItems[], Error>;
+    readonly findPendingConfirmation: (olderThanMinutes?: number) => Effect.Effect<OrderWithItems[], Error>;
     readonly updateCheckout: (orderId: string, checkoutSessionId: string, checkoutProvider: 'stripe' | 'near' | 'pingpay') => Effect.Effect<OrderWithItems, Error>;
     readonly updateDraftOrderIds: (orderId: string, draftOrderIds: Record<string, string>) => Effect.Effect<OrderWithItems, Error>;
     readonly updatePaymentDetails: (orderId: string, paymentDetails: Record<string, unknown>) => Effect.Effect<OrderWithItems, Error>;
@@ -340,6 +341,27 @@ export const OrderStoreLive = Layer.effect(
             return await Promise.all(abandoned.map(rowToOrder));
           },
           catch: (error) => new Error(`Failed to find abandoned drafts: ${error}`),
+        }),
+
+      findPendingConfirmation: (olderThanMinutes = 5) =>
+        Effect.tryPromise({
+          try: async () => {
+            const cutoffTime = new Date(Date.now() - olderThanMinutes * 60 * 1000);
+
+            const results = await db
+              .select()
+              .from(schema.orders)
+              .where(and(
+                eq(schema.orders.status, 'paid_pending_fulfillment'),
+                eq(schema.orders.isDeleted, false)
+              ))
+              .orderBy(desc(schema.orders.createdAt));
+
+            const pending = results.filter(order => order.createdAt < cutoffTime);
+
+            return await Promise.all(pending.map(rowToOrder));
+          },
+          catch: (error) => new Error(`Failed to find pending confirmation orders: ${error}`),
         }),
 
       updateCheckout: (orderId, checkoutSessionId, checkoutProvider) =>

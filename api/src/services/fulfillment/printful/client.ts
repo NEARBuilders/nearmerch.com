@@ -278,7 +278,7 @@ export class PrintfulClient {
       };
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : String(e);
-      console.log(`[PrintfulClient] Catalog product ${productId} not available: ${errorMessage}`);
+      console.warn(`[PrintfulClient] Catalog product ${productId} not available: ${errorMessage}. Variant fulfillment files will lack technique metadata — orders will need to resolve techniques at creation time.`);
       return null;
     }
   }

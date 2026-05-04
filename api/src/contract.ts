@@ -484,6 +484,36 @@ export const contract = oc.router({
       }),
     ),
 
+  retryPendingConfirmations: oc
+    .route({
+      method: "POST",
+      path: "/cron/retry-confirmations",
+      summary: "Retry pending fulfillment confirmations",
+      description:
+        "Retries Printful draft order confirmations for orders stuck in paid_pending_fulfillment. Intended to be called by a cron job every 5-10 minutes.",
+      tags: ["Jobs"],
+    })
+    .input(
+      z.object({
+        olderThanMinutes: z.number().int().positive().default(5).optional(),
+      }),
+    )
+    .output(
+      z.object({
+        totalProcessed: z.number(),
+        confirmed: z.number(),
+        stillPending: z.number(),
+        failed: z.number(),
+        errors: z.array(
+          z.object({
+            orderId: z.string(),
+            provider: z.string(),
+            error: z.string(),
+          }),
+        ),
+      }),
+    ),
+
   getNearPrice: oc
     .route({
       method: "GET",

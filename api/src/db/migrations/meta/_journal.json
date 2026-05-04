@@ -65,19 +65,26 @@
       "tag": "0008_old_vanisher",
       "breakpoints": true
     },
-{
-  "idx": 9,
-  "version": "7",
-  "when": 1776528135295,
-  "tag": "0009_funny_hobgoblin",
-  "breakpoints": true
-},
-{
-  "idx": 10,
-  "version": "7",
-  "when": 1776600000000,
-  "tag": "0010_migrate_fulfillment_config",
-  "breakpoints": true
-}
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1776528135295,
+      "tag": "0009_funny_hobgoblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1776600000000,
+      "tag": "0010_migrate_fulfillment_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1777919710374,
+      "tag": "0011_wakeful_the_enforcers",
+      "breakpoints": true
+    }
   ]
 }

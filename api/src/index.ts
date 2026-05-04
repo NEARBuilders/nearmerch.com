@@ -1286,8 +1286,33 @@ export default createPlugin({
               });
             }
 
-            const { eventType, externalId, data } =
+            const { eventType, externalId, catalogProductId, data } =
               parsePrintfulWebhook(rawBody);
+
+            if (eventType === 'catalog_price_changed' && catalogProductId) {
+              console.log(
+                `[Printful Webhook] Catalog price changed for product: ${catalogProductId}`,
+              );
+              try {
+                const { PrintfulService: PFSvc } = await import('./services/fulfillment/printful/service');
+                const pfService = new PFSvc(
+                  secrets.PRINTFUL_API_KEY!,
+                  secrets.PRINTFUL_STORE_ID!,
+                );
+                const productStore = await managedRuntime.runPromise(
+                  Effect.gen(function* () {
+                    return yield* ProductStore;
+                  }),
+                );
+                await pfService.handleCatalogPriceChange(String(catalogProductId), productStore);
+              } catch (error) {
+                console.warn(
+                  `[Printful Webhook] Failed to handle catalog_price_changed: ${error instanceof Error ? error.message : String(error)}`,
+                );
+              }
+              return { received: true };
+            }
+
             if (!externalId) {
               return { received: true };
             }
@@ -2168,6 +2193,7 @@ export default createPlugin({
                 name: input.name,
                 description: input.description,
                 price: input.price,
+                priceLocked: input.priceLocked,
                 images: input.images,
                 thumbnailImage: input.thumbnailImage,
               });

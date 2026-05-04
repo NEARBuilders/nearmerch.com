@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ExternalLink, ImagePlus, Loader2, Star, Trash2, Upload, GripVertical, X } from "lucide-react";
+import { ExternalLink, ImagePlus, Loader2, Lock, Star, Trash2, Unlock, Upload, GripVertical, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { DragDropProvider, DragOverlay, useDraggable, useDroppable } from "@dnd-kit/react";
 import { useProduct } from "@/integrations/api";
@@ -142,6 +142,7 @@ function ProductEditSheet() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
+  const [priceLocked, setPriceLocked] = useState(false);
   const [images, setImages] = useState<ProductImageDraft[]>([]);
   const [thumbnailImage, setThumbnailImage] = useState<string | null>(null);
   const [newImageUrl, setNewImageUrl] = useState("");
@@ -161,6 +162,7 @@ function ProductEditSheet() {
       setName(product.title);
       setDescription(product.description ?? "");
       setPrice(String(product.price));
+      setPriceLocked(product.priceLocked ?? false);
       setImages(
         (product.images ?? []).map((img, i) => ({
           id: img.id,
@@ -179,6 +181,7 @@ function ProductEditSheet() {
           title: product.title,
           description: product.description ?? "",
           price: product.price,
+          priceLocked: product.priceLocked ?? false,
           images: product.images ?? [],
           thumbnailImage: product.thumbnailImage ?? null,
         }),
@@ -192,6 +195,7 @@ function ProductEditSheet() {
         title: name,
         description,
         price: Number(price) || 0,
+        priceLocked,
         images,
         thumbnailImage,
       })
@@ -322,6 +326,7 @@ function ProductEditSheet() {
         name: name !== product.title ? name : undefined,
         description: description !== (product.description ?? "") ? description : undefined,
         price: parsedPrice !== product.price ? parsedPrice : undefined,
+        priceLocked: priceLocked !== (product.priceLocked ?? false) ? priceLocked : undefined,
         images: images.map((img, i) => ({
           id: img.id,
           url: img.url,
@@ -342,6 +347,7 @@ function ProductEditSheet() {
               title: name,
               description,
               price: parsedPrice,
+              priceLocked,
               images,
               thumbnailImage,
             }),
@@ -350,7 +356,7 @@ function ProductEditSheet() {
         },
       },
     );
-  }, [updateMutation, productId, name, description, price, images, thumbnailImage, product, queryClient]);
+  }, [updateMutation, productId, name, description, price, priceLocked, images, thumbnailImage, product, queryClient]);
 
   return (
     <Sheet open onOpenChange={(open) => { if (!open) handleClose(); }}>
@@ -418,8 +424,51 @@ function ProductEditSheet() {
                     </div>
                     <div className="space-y-2 w-40">
                       <Label htmlFor="price">Price (USD)</Label>
-                      <Input id="price" type="number" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} />
+                      <div className="flex items-center gap-2">
+                        <Input id="price" type="number" step="0.01" min="0" value={price} onChange={(e) => setPrice(e.target.value)} />
+                        <button
+                          type="button"
+                          onClick={() => setPriceLocked((v) => !v)}
+                          className={cn(
+                            "shrink-0 h-9 w-9 flex items-center justify-center rounded-md border transition-colors",
+                            priceLocked
+                              ? "border-[#00EC97] bg-[#00EC97]/10 text-[#00EC97]"
+                              : "border-border/60 bg-background/60 text-foreground/40 hover:text-foreground/70",
+                          )}
+                          title={priceLocked ? "Price locked — sync won't overwrite" : "Price unlocked — sync may overwrite"}
+                        >
+                          {priceLocked ? <Lock className="size-4" /> : <Unlock className="size-4" />}
+                        </button>
+                      </div>
+                      {priceLocked && (
+                        <p className="text-[11px] text-[#00EC97]">Locked — re-sync won't change your price</p>
+                      )}
                     </div>
+                    {(() => {
+                      const costs = (product.variants ?? [])
+                        .map((v) => v.fulfillmentCost)
+                        .filter((c): c is number => typeof c === "number" && c > 0);
+                      const minCost = costs.length > 0 ? Math.min(...costs) : null;
+                      const parsedPrice = Number(price) || 0;
+                      const margin = minCost !== null ? parsedPrice - minCost : null;
+                      if (minCost === null) return null;
+                      return (
+                        <div className="rounded-lg border border-border/40 bg-background/30 p-3 space-y-1.5">
+                          <p className="text-xs font-medium text-foreground/70">Fulfillment Cost</p>
+                          <p className="text-sm">${minCost.toFixed(2)}</p>
+                          <div className="flex items-center gap-2 pt-1 border-t border-border/30">
+                            <p className="text-xs font-medium text-foreground/70">Margin</p>
+                            <p className={cn(
+                              "text-sm font-semibold",
+                              margin !== null && margin > 0 && "text-[#00EC97]",
+                              margin !== null && margin <= 0 && "text-red-500",
+                            )}>
+                              {margin !== null ? `$${margin.toFixed(2)}` : "—"}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 

@@ -113,6 +113,7 @@ export function useUpdateProduct() {
       name?: string;
       description?: string | null;
       price?: number;
+      priceLocked?: boolean;
       images?: Array<ProductImage>;
       thumbnailImage?: string | null;
     }) => {

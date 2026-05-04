@@ -1050,6 +1050,7 @@ export const contract = oc.router({
       name: z.string().optional(),
       description: z.string().nullable().optional(),
       price: z.number().positive().optional(),
+      priceLocked: z.boolean().optional(),
       images: z.array(ProductImageSchema).optional(),
       thumbnailImage: z.string().nullable().optional(),
     }))

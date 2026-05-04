@@ -29,6 +29,7 @@ import {
   GripVertical,
   ArrowUp,
   ArrowDown,
+  Lock,
 } from "lucide-react";
 import { ProductTitleCell } from "@/components/admin/product-title-cell";
 import { Button } from "@/components/ui/button";
@@ -927,6 +928,13 @@ function ExpandedProductPanel({
   );
 }
 
+function getMinFulfillmentCost(product: Product): number | null {
+  const costs = (product.variants ?? [])
+    .map((v) => v.fulfillmentCost)
+    .filter((c): c is number => typeof c === "number" && c > 0);
+  return costs.length > 0 ? Math.min(...costs) : null;
+}
+
 // Helper functions for time and date formatting
 function InventoryManagement() {
   const {
@@ -1139,11 +1147,74 @@ function InventoryManagement() {
         </Button>
       ),
       cell: ({ row }) => (
-        <span className="text-sm text-foreground/90 dark:text-muted-foreground">
+        <span className="text-sm text-foreground/90 dark:text-muted-foreground inline-flex items-center gap-1">
           ${row.original.price.toFixed(2)} {row.original.currency}
+          {row.original.priceLocked && (
+            <span title="Price locked"><Lock className="size-3 text-[#00EC97]" /></span>
+          )}
         </span>
       ),
-      size: 100,
+      size: 110,
+    },
+    {
+      id: "cost",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="h-auto p-0 font-medium hover:bg-transparent"
+        >
+          Cost
+          <ArrowUpDown className="ml-2 size-4" />
+        </Button>
+      ),
+      accessorFn: (row) => getMinFulfillmentCost(row) ?? -1,
+      cell: ({ row }) => {
+        const cost = getMinFulfillmentCost(row.original);
+        if (cost === null) {
+          return <span className="text-sm text-foreground/40">—</span>;
+        }
+        return (
+          <span className="text-sm text-foreground/70 dark:text-muted-foreground">
+            ${cost.toFixed(2)}
+          </span>
+        );
+      },
+      size: 80,
+    },
+    {
+      id: "margin",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          className="h-auto p-0 font-medium hover:bg-transparent"
+        >
+          Margin
+          <ArrowUpDown className="ml-2 size-4" />
+        </Button>
+      ),
+      accessorFn: (row) => {
+        const cost = getMinFulfillmentCost(row);
+        return cost !== null ? row.price - cost : -Infinity;
+      },
+      cell: ({ row }) => {
+        const cost = getMinFulfillmentCost(row.original);
+        if (cost === null) {
+          return <span className="text-sm text-foreground/40">—</span>;
+        }
+        const margin = row.original.price - cost;
+        return (
+          <span className={cn(
+            "text-sm font-medium",
+            margin > 0 && "text-[#00EC97]",
+            margin <= 0 && "text-red-500",
+          )}>
+            ${margin.toFixed(2)}
+          </span>
+        );
+      },
+      size: 90,
     },
     {
       accessorKey: "collections",

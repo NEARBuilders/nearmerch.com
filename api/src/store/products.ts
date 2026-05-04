@@ -12,6 +12,7 @@ import type {
   ProductWithImages,
 } from "../schema";
 import { Database } from "./database";
+import type { PrintfulProviderConfig } from '../services/fulfillment/printful/client';
 
 export class ProductStore extends Context.Tag("ProductStore")<
   ProductStore,
@@ -19,6 +20,10 @@ export class ProductStore extends Context.Tag("ProductStore")<
     readonly find: (identifier: string) => Effect.Effect<Product | null, Error>;
     readonly findByPublicKey: (
       publicKey: string,
+    ) => Effect.Effect<Product | null, Error>;
+    readonly findByExternalProductId: (
+      externalProductId: string,
+      fulfillmentProvider: string,
     ) => Effect.Effect<Product | null, Error>;
     readonly findMany: (
       criteria: ProductCriteria,
@@ -58,6 +63,7 @@ export class ProductStore extends Context.Tag("ProductStore")<
         name?: string;
         description?: string | null;
         price?: number;
+        priceLocked?: boolean;
         images?: ProductImage[];
         thumbnailImage?: string | null;
       },
@@ -98,17 +104,22 @@ export const ProductStoreLive = Layer.effect(
         .from(schema.productVariants)
         .where(eq(schema.productVariants.productId, productId));
 
-      return variants.map((v) => ({
-        id: v.id,
-        title: v.name,
-        sku: v.sku || undefined,
-        price: v.price / 100,
-        currency: v.currency,
-        attributes: v.attributes || [],
-        externalVariantId: v.externalVariantId || undefined,
-        fulfillmentConfig: v.fulfillmentConfig || undefined,
-        availableForSale: v.inStock,
-      }));
+      return variants.map((v) => {
+        const fc = v.fulfillmentConfig as { providerName?: string; providerConfig?: PrintfulProviderConfig } | null;
+        const fulfillmentCost = fc?.providerConfig?.fulfillmentCost;
+        return {
+          id: v.id,
+          title: v.name,
+          sku: v.sku || undefined,
+          price: v.price / 100,
+          currency: v.currency,
+          attributes: v.attributes || [],
+          externalVariantId: v.externalVariantId || undefined,
+          fulfillmentConfig: v.fulfillmentConfig || undefined,
+          availableForSale: v.inStock,
+          fulfillmentCost,
+        };
+      });
     };
 
     const getProductCollections = async (
@@ -219,6 +230,7 @@ export const ProductStoreLive = Layer.effect(
         source: row.source,
         thumbnailImage: row.thumbnailImage || undefined,
         listed: row.listed ?? true,
+        priceLocked: row.priceLocked ?? false,
         assetId: row.assetId || undefined,
         metadata: row.metadata || undefined,
       };
@@ -289,6 +301,30 @@ export const ProductStoreLive = Layer.effect(
           },
           catch: (error) =>
             new Error(`Failed to find product by publicKey: ${error}`),
+        }),
+
+      findByExternalProductId: (externalProductId, fulfillmentProvider) =>
+        Effect.tryPromise({
+          try: async () => {
+            const results = await db
+              .select()
+              .from(schema.products)
+              .where(
+                and(
+                  eq(schema.products.externalProductId, externalProductId),
+                  eq(schema.products.fulfillmentProvider, fulfillmentProvider),
+                ),
+              )
+              .limit(1);
+
+            if (results.length === 0) {
+              return null;
+            }
+
+            return await rowToProduct(results[0]!);
+          },
+          catch: (error) =>
+            new Error(`Failed to find product by externalProductId: ${error}`),
         }),
 
       findMany: (criteria) =>
@@ -441,6 +477,19 @@ export const ProductStoreLive = Layer.effect(
 
             const finalId = existingProduct?.id ?? product.id;
 
+            let existingVariantsByExtId = new Map<string, { price: number }>();
+            if (existingProduct && existingProduct.priceLocked) {
+              const existingVariants = await db
+                .select({ externalVariantId: schema.productVariants.externalVariantId, price: schema.productVariants.price })
+                .from(schema.productVariants)
+                .where(eq(schema.productVariants.productId, existingProduct.id));
+              for (const ev of existingVariants) {
+                if (ev.externalVariantId) {
+                  existingVariantsByExtId.set(ev.externalVariantId, { price: ev.price });
+                }
+              }
+            }
+
             if (existingProduct) {
               const existingMetadata = existingProduct.metadata as ProductMetadata | null;
               const newProviderDetails = product.metadata?.providerDetails;
@@ -457,7 +506,7 @@ export const ProductStoreLive = Layer.effect(
               await db
                 .update(schema.products)
                 .set({
-                  price: Math.round(product.price * 100),
+                  price: existingProduct.priceLocked ? existingProduct.price : Math.round(product.price * 100),
                   options: product.options,
                   thumbnailImage: product.thumbnailImage || existingProduct.thumbnailImage || null,
                   currency: product.currency,
@@ -477,19 +526,23 @@ export const ProductStoreLive = Layer.effect(
 
               if (product.variants.length > 0) {
                 await db.insert(schema.productVariants).values(
-                  product.variants.map((variant) => ({
-                    id: variant.id,
-                    productId: finalId,
-                    name: variant.name,
-                    sku: variant.sku || null,
-                    price: Math.round(variant.price * 100),
-                    currency: variant.currency,
-                    attributes: variant.attributes || null,
-                    externalVariantId: variant.externalVariantId || null,
-                    fulfillmentConfig: variant.fulfillmentConfig || null,
-                    inStock: variant.inStock ?? true,
-                    createdAt: now,
-                  })),
+                  product.variants.map((variant) => {
+                    const existingVariant = existingVariantsByExtId.get(variant.externalVariantId || '');
+                    const isPriceLocked = existingProduct.priceLocked ?? false;
+                    return {
+                      id: variant.id,
+                      productId: finalId,
+                      name: variant.name,
+                      sku: variant.sku || null,
+                      price: (isPriceLocked && existingVariant) ? existingVariant.price : Math.round(variant.price * 100),
+                      currency: variant.currency,
+                      attributes: variant.attributes || null,
+                      externalVariantId: variant.externalVariantId || null,
+                      fulfillmentConfig: variant.fulfillmentConfig || null,
+                      inStock: variant.inStock ?? true,
+                      createdAt: now,
+                    };
+                  }),
                 );
               }
 
@@ -765,6 +818,7 @@ export const ProductStoreLive = Layer.effect(
             if (data.name !== undefined) updateData.name = data.name;
             if (data.description !== undefined) updateData.description = data.description;
             if (data.price !== undefined) updateData.price = Math.round(data.price * 100);
+            if (data.priceLocked !== undefined) updateData.priceLocked = data.priceLocked;
             if (data.thumbnailImage !== undefined) updateData.thumbnailImage = data.thumbnailImage;
 
             await db

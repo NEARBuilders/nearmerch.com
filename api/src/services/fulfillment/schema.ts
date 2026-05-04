@@ -29,8 +29,8 @@ export const CatalogSlotSchema = z.object({
 });
 
 export const ProviderCatalogPriceSchema = z.object({
-  wholesale: z.number().optional(),
-  retail: z.number().optional(),
+  cost: z.number().optional(),
+  discountedCost: z.number().optional(),
   currency: z.string().optional(),
 });
 

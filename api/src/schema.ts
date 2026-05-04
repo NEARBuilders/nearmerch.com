@@ -75,6 +75,7 @@ export const ProductVariantSchema = z.object({
   fulfillmentConfig: FulfillmentConfigSchema.optional(),
   availableForSale: z.boolean().default(true),
   inventoryQuantity: z.number().optional(),
+  fulfillmentCost: z.number().optional(),
 });
 
 export const CollectionFeaturedProductSchema = z.object({
@@ -191,6 +192,7 @@ export const ProductSchema = z.object({
   source: z.string().optional(),
   vendor: z.string().optional(),
   listed: z.boolean().default(true),
+  priceLocked: z.boolean().default(false),
   assetId: z.string().optional(),
   metadata: ProductMetadataSchema.optional(),
 });
@@ -412,6 +414,7 @@ export const ProductVariantInputSchema = z.object({
   externalVariantId: z.string().optional(),
   fulfillmentConfig: FulfillmentConfigSchema.optional(),
   inStock: z.boolean().optional(),
+  fulfillmentCost: z.number().optional(),
 });
 
 export const ProductWithImagesSchema = z.object({

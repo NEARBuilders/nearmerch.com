@@ -1,6 +1,6 @@
 {
-  "id": "4a7901c2-c341-43d5-bcde-7b39deabb2c8",
-  "prevId": "4d60edfd-2619-48b3-a79c-71f84dc39ade",
+  "id": "8dcb3370-5d4f-4dac-8a69-e49333e140ae",
+  "prevId": "4a7901c2-c341-43d5-bcde-7b39deabb2c8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1394,6 +1394,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": true
+        },
+        "price_locked": {
+          "name": "price_locked",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "created_at": {
           "name": "created_at",

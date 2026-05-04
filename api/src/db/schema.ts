@@ -89,6 +89,7 @@ export const products = pgTable(
       mode: "date",
     }),
     listed: boolean("listed").notNull().default(true),
+    priceLocked: boolean("price_locked").notNull().default(false),
 
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()

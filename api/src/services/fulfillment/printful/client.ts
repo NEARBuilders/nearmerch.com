@@ -11,6 +11,34 @@ import { FulfillmentError } from '../errors';
 
 export type { Address, CatalogItem, Order, Shipment, Variant } from 'printful-sdk-js-v2';
 
+export interface TechniquePrice {
+  technique: string;
+  price: number;
+  discountedPrice: number;
+}
+
+export interface PlacementPrice {
+  placement: string;
+  technique: string;
+  price: number;
+  discountedPrice: number;
+}
+
+export interface VariantPricing {
+  techniques: TechniquePrice[];
+  placements: PlacementPrice[];
+  currency: string;
+}
+
+export interface PrintfulProviderConfig {
+  catalogVariantId: number;
+  catalogProductId: number;
+  technique?: string;
+  techniquePrice?: number;
+  placementPricing?: Record<string, number>;
+  fulfillmentCost?: number;
+}
+
 export interface PrintfulSyncProduct {
   id: number;
   external_id: string;
@@ -292,11 +320,7 @@ export class PrintfulClient {
     return (data?.data ?? []) as Variant[];
   }
 
-  async getVariantPrice(variantId: number): Promise<{
-    wholesale: number;
-    retail: number;
-    currency: string;
-  } | null> {
+  async getVariantPrice(variantId: number): Promise<VariantPricing | null> {
     try {
       const result = await this.executeWithRetry(
         () => this.sdk.catalogV2.getVariantPricesById(variantId),
@@ -304,15 +328,71 @@ export class PrintfulClient {
       );
       const data = result as { data?: any };
       if (!data?.data) return null;
-      return {
-        wholesale: parseFloat(data.data.wholesale_price ?? '0'),
-        retail: parseFloat(data.data.retail_price ?? '0'),
-        currency: data.data.currency ?? 'USD',
-      };
+      return this.parsePricingResponse(data.data);
     } catch (e) {
       console.log(`[PrintfulClient] Variant price ${variantId} not available: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
+  }
+
+  async getVariantPricesBatch(variantIds: number[]): Promise<Map<number, VariantPricing>> {
+    const results = new Map<number, VariantPricing>();
+    await Effect.runPromise(
+      Effect.forEach(variantIds, (variantId) =>
+        Effect.tryPromise({
+          try: async () => {
+            const price = await this.getVariantPrice(variantId);
+            if (price) results.set(variantId, price);
+          },
+          catch: () => {},
+        })
+      , { concurrency: 5 })
+    );
+    return results;
+  }
+
+  async getProductPrices(productId: number): Promise<VariantPricing | null> {
+    try {
+      const result = await this.executeWithRetry(
+        () => this.sdk.catalogV2.getProductPricesById(productId),
+        `getProductPrices(${productId})`
+      );
+      const data = result as { data?: any };
+      if (!data?.data) return null;
+      return this.parsePricingResponse(data.data);
+    } catch (e) {
+      console.warn(`[PrintfulClient] Product prices ${productId} not available: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
+  }
+
+  private parsePricingResponse(d: any): VariantPricing {
+    const techniques: TechniquePrice[] = [];
+    if (Array.isArray(d.variant?.techniques)) {
+      for (const t of d.variant.techniques) {
+        techniques.push({
+          technique: t.technique_key,
+          price: parseFloat(t.price ?? '0'),
+          discountedPrice: parseFloat(t.discounted_price ?? '0'),
+        });
+      }
+    }
+
+    const placements: PlacementPrice[] = [];
+    if (Array.isArray(d.product?.placements)) {
+      for (const p of d.product.placements) {
+        if (p.id && p.technique_key) {
+          placements.push({
+            placement: p.id,
+            technique: p.technique_key,
+            price: parseFloat(p.price ?? '0'),
+            discountedPrice: parseFloat(p.discounted_price ?? '0'),
+          });
+        }
+      }
+    }
+
+    return { techniques, placements, currency: d.currency ?? 'USD' };
   }
 
   async getCatalogVariant(variantId: number): Promise<Variant | null> {

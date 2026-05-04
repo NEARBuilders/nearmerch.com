@@ -34,7 +34,7 @@ import type {
   TaxQuoteOutput,
   VariantPriceOutput,
 } from '../schema';
-import { PrintfulClient, type PrintfulSyncProduct, type PrintfulSyncVariant } from './client';
+import { PrintfulClient, type PrintfulSyncProduct, type PrintfulSyncVariant, type VariantPricing } from './client';
 import type { MockupStyleInfo } from './types';
 import type { ProductWithImages, ProductVariantInput, Product, FulfillmentConfig } from '../../../schema';
 import type { SyncProgressEvent } from '../schema';
@@ -185,8 +185,12 @@ export class PrintfulService {
       try: async () => {
         const providerRef = input.id.replace('printful-', '');
         const price = await this.client.getVariantPrice(parseInt(providerRef, 10));
+        if (!price) return { price: null };
+        const primaryTechnique = price.techniques[0];
         return {
-          price: price ? { wholesale: price.wholesale, retail: price.retail, currency: price.currency } : null,
+          price: primaryTechnique
+            ? { cost: primaryTechnique.price, discountedCost: primaryTechnique.discountedPrice || primaryTechnique.price, currency: price.currency }
+            : null,
         };
       },
       catch: (e) => new FulfillmentError({
@@ -752,7 +756,7 @@ export class PrintfulService {
         const detail = await this.client.getSyncProduct(syncProduct.id);
         const { sync_product, sync_variants } = detail;
 
-        const variantIds = sync_variants.map(v => v.variant_id).filter(Boolean);
+        const variantIds = sync_variants.map(v => v.variant_id).filter(id => id > 0);
         const catalogVariants = await this.client.getCatalogVariantsBatch(variantIds);
 
         const catalogProductId = sync_variants[0]?.product?.product_id;
@@ -764,6 +768,19 @@ export class PrintfulService {
           }
         } else {
           console.warn(`[PrintfulService.syncProducts] No catalogProductId found for "${sync_product.name}" — placement/technique data will be missing.`);
+        }
+
+        let variantPrices: Map<number, VariantPricing> = new Map();
+        let productPrices: Awaited<ReturnType<typeof this.client.getProductPrices>> = null;
+        if (catalogProductId) {
+          try {
+            [variantPrices, productPrices] = await Promise.all([
+              this.client.getVariantPricesBatch(variantIds),
+              this.client.getProductPrices(catalogProductId),
+            ]);
+          } catch (e) {
+            console.warn(`[PrintfulService.syncProducts] Failed to fetch pricing data for "${sync_product.name}": ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
 
         yield {
@@ -781,7 +798,9 @@ export class PrintfulService {
           sync_product,
           sync_variants,
           catalogVariants,
-          catalogProduct
+          catalogProduct,
+          variantPrices,
+          productPrices
         );
 
         const result = await upsertProduct(productWithImages, new Date());
@@ -919,7 +938,9 @@ export class PrintfulService {
       placements?: string[];
       placementTechniques?: Record<string, string>;
       primaryPlacement?: { name: string; technique: string };
-    } | null
+    } | null,
+    variantPrices?: Map<number, VariantPricing>,
+    productPrices?: VariantPricing | null
   ): ProductWithImages {
     const optionsMap = new Map<string, Set<string>>();
     const variants = syncVariants.map(v => {
@@ -936,11 +957,45 @@ export class PrintfulService {
 
       const designFiles = this.extractDesignFiles(v.files, catalogProduct, syncProduct.name);
 
+      const variantPrice = variantPrices?.get(v.variant_id);
+      const activePlacements = designFiles
+        .filter(df => df.metadata?.technique && df.slot)
+        .map(df => ({ slot: df.slot!, technique: String(df.metadata!.technique) }));
+
+      let matchedTechnique: string | null = catalogProduct?.primaryPlacement?.technique ?? null;
+      if (activePlacements.length > 0) {
+        matchedTechnique = activePlacements[0]!.technique;
+      }
+
+      const techniquePrice = matchedTechnique
+        ? variantPrice?.techniques.find(t => t.technique === matchedTechnique)?.price ?? 0
+        : 0;
+
+      const primaryPlacementSlot = activePlacements.length > 0 ? activePlacements[0]!.slot : null;
+      const additionalPlacementCost = activePlacements
+        .filter(p => p.slot !== primaryPlacementSlot)
+        .reduce((sum, p) => {
+          const placementPrice = variantPrice?.placements.find(pl => pl.placement === p.slot)?.price
+            ?? productPrices?.placements.find(pl => pl.placement === p.slot)?.price;
+          if (placementPrice !== undefined) return sum + placementPrice;
+          return sum;
+        }, 0);
+
+      const fulfillmentCost = techniquePrice + additionalPlacementCost;
+
+      const allPlacementPricing: Record<string, number> = {};
+      for (const p of variantPrice?.placements ?? productPrices?.placements ?? []) {
+        allPlacementPricing[p.placement] = p.price;
+      }
+
       const fulfillmentConfig: FulfillmentConfig = {
         providerName: 'printful',
         providerConfig: {
           catalogVariantId: v.variant_id,
           catalogProductId: v.product.product_id,
+          ...(matchedTechnique ? { technique: matchedTechnique, techniquePrice } : {}),
+          ...(Object.keys(allPlacementPricing).length > 0 ? { placementPricing: allPlacementPricing } : {}),
+          ...(fulfillmentCost > 0 ? { fulfillmentCost } : {}),
         },
         files: designFiles,
       };
@@ -959,6 +1014,7 @@ export class PrintfulService {
         externalVariantId: String(v.variant_id),
         fulfillmentConfig,
         inStock: v.synced,
+        fulfillmentCost: fulfillmentCost > 0 ? fulfillmentCost : undefined,
       };
     });
 
@@ -1236,5 +1292,65 @@ export class PrintfulService {
 
       return images;
     });
+  }
+
+  async handleCatalogPriceChange(
+    catalogProductId: string,
+    productStore: {
+      findByExternalProductId: (externalProductId: string, fulfillmentProvider: string) => Effect.Effect<Product | null, Error>;
+      upsert: (product: ProductWithImages, syncedAt?: Date) => Effect.Effect<Product & { isNew: boolean }, Error>;
+    },
+  ): Promise<void> {
+    const product = await Effect.runPromise(
+      productStore.findByExternalProductId(catalogProductId, 'printful'),
+    ).catch(() => null);
+
+    if (!product) {
+      console.log(`[Printful] No local product found for catalog product ${catalogProductId}, skipping price update`);
+      return;
+    }
+
+    console.log(`[Printful] Catalog price changed for product ${product.id} (catalog: ${catalogProductId}), re-syncing`);
+
+    try {
+      const detail = await this.client.getSyncProduct(catalogProductId);
+      const { sync_product, sync_variants } = detail;
+
+      const variantIds = sync_variants.map(v => v.variant_id).filter(id => id > 0);
+      const catalogVariants = await this.client.getCatalogVariantsBatch(variantIds);
+
+      let catalogProduct: Awaited<ReturnType<typeof this.client.getCatalogProduct>> = null;
+      if (catalogProductId) {
+        catalogProduct = await this.client.getCatalogProduct(parseInt(catalogProductId, 10));
+      }
+
+      let variantPrices: Map<number, VariantPricing> = new Map();
+      let productPrices: Awaited<ReturnType<typeof this.client.getProductPrices>> = null;
+      if (catalogProductId) {
+        try {
+          [variantPrices, productPrices] = await Promise.all([
+            this.client.getVariantPricesBatch(variantIds),
+            this.client.getProductPrices(parseInt(catalogProductId, 10)),
+          ]);
+        } catch (e) {
+          console.warn(`[Printful] Failed to fetch pricing data for catalog_price_changed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      const transformed = this.transformSyncProductToV2(
+        sync_product,
+        sync_variants,
+        catalogVariants,
+        catalogProduct,
+        variantPrices,
+        productPrices,
+      );
+
+      await Effect.runPromise(
+        productStore.upsert(transformed, new Date()),
+      );
+    } catch (error) {
+      console.error(`[Printful] Failed to re-sync product after catalog price change: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 }

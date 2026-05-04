@@ -4,10 +4,13 @@ import type { OrderStatus, TrackingInfo } from '../../../schema';
 
 type PrintfulWebhookPayload = {
   type?: string;
-  data?: {
+  data?: { 
     order?: { 
       external_id?: string;
       status?: string;
+    };
+    catalog_product?: {
+      id?: number;
     };
     shipment?: {
       tracking_number?: string;
@@ -49,6 +52,7 @@ export function verifyPrintfulWebhookSignature(options: {
 export function parsePrintfulWebhook(rawBody: string): {
   eventType: string;
   externalId?: string;
+  catalogProductId?: number;
   data?: PrintfulWebhookPayload['data'];
 } {
   let payload: PrintfulWebhookPayload;
@@ -61,6 +65,7 @@ export function parsePrintfulWebhook(rawBody: string): {
   return {
     eventType: payload.type || 'unknown',
     externalId: payload.data?.order?.external_id,
+    catalogProductId: payload.data?.catalog_product?.id,
     data: payload.data,
   };
 }

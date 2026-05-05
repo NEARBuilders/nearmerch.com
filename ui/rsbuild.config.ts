@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModuleFederationPlugin } from "@module-federation/enhanced/rspack";
 import { pluginModuleFederation } from "@module-federation/rsbuild-plugin";
-import { defineConfig } from "@rsbuild/core";
+import { defineConfig, loadEnv } from "@rsbuild/core";
 import { pluginReact } from "@rsbuild/plugin-react";
 import { TanStackRouterRspack } from "@tanstack/router-plugin/rspack";
 import { withZephyr } from "zephyr-rsbuild-plugin";
@@ -15,6 +15,8 @@ const normalizedName = pkg.name;
 const shouldDeploy = process.env.DEPLOY === "true";
 const buildTarget = process.env.BUILD_TARGET as "client" | "server" | undefined;
 const isServerBuild = buildTarget === "server";
+
+const { publicVars } = loadEnv({ cwd: path.resolve(__dirname, "..") });
 
 const bosConfigPath = path.resolve(__dirname, "../bos.config.json");
 const bosConfig = JSON.parse(fs.readFileSync(bosConfigPath, "utf8"));
@@ -80,14 +82,7 @@ function createClientConfig() {
       entry: {
         index: "./src/hydrate.tsx",
       },
-      define: {
-        "import.meta.env.PUBLIC_POSTHOG_KEY": JSON.stringify(
-          process.env.PUBLIC_POSTHOG_KEY ?? "",
-        ),
-        "import.meta.env.PUBLIC_POSTHOG_HOST": JSON.stringify(
-          process.env.PUBLIC_POSTHOG_HOST ?? "",
-        ),
-      },
+      define: publicVars,
     },
     resolve: {
       alias: {

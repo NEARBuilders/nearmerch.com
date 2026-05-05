@@ -23,6 +23,9 @@ jobs:
       ZE_SECRET_TOKEN: ${{ secrets.ZEPHYR_AUTH_TOKEN }}
       ZE_SERVER_TOKEN: ${{ secrets.ZEPHYR_SERVER_AUTH_TOKEN }}
       ZE_USER_EMAIL: ${{ secrets.ZEPHYR_USER_EMAIL }}
+      # PUBLIC_ vars are baked into the UI build at compile time via Rsbuild loadEnv
+      PUBLIC_POSTHOG_KEY: ${{ secrets.PUBLIC_POSTHOG_KEY }}
+      PUBLIC_POSTHOG_HOST: ${{ secrets.PUBLIC_POSTHOG_HOST }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -1,4 +1,5 @@
 import { getAssetsUrl, getRuntimeConfig } from "./remote/runtime";
+import { initPostHog } from "./lib/posthog";
 
 export async function hydrate() {
   const runtimeConfig = getRuntimeConfig();
@@ -22,6 +23,8 @@ export async function hydrate() {
   }
 
   const nearAccountId = authClient.near.getAccountId() ?? null;
+
+  initPostHog();
 
   const { router, queryClient } = createRouter({
     context: {

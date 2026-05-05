@@ -33,6 +33,7 @@ import {
 } from "@/lib/seo";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { captureEvent } from "@/lib/posthog";
 import { apiClient } from "@/utils/orpc";
 import { useNearAccountId } from "@/hooks/use-near-account-id";
 import { toast } from "sonner";
@@ -406,7 +407,24 @@ function ProductDetailPage() {
         activeReferralAccountId,
       );
     }
+    captureEvent('add_to_cart', {
+      product_id: product.id,
+      product_slug: product.slug,
+      product_title: product.title,
+      variant_id: selectedVariantId,
+      price: displayPrice,
+      quantity,
+    });
     openCartSidebar();
+  };
+
+  const handleDownload = () => {
+    captureEvent('download', {
+      product_id: product.id,
+      product_slug: product.slug,
+      product_title: product.title,
+      download_kind: freeDownload?.kind || 'free',
+    });
   };
 
   const handleImageClick = (index: number) => {
@@ -827,7 +845,7 @@ function ProductDetailPage() {
                   variant="outline"
                   className="mb-3 w-full rounded-lg h-14 border-[#00EC97]/40 bg-[#00EC97]/10 text-base font-bold text-[#00EC97] hover:border-[#00EC97] hover:bg-[#00EC97]/12"
                 >
-                  <a href={freeDownload.url} target="_blank" rel="noreferrer">
+                  <a href={freeDownload.url} target="_blank" rel="noreferrer" onClick={handleDownload}>
                     <Download className="size-5" />
                     {freeDownload.label || "Download for Free"}
                   </a>

@@ -80,6 +80,14 @@ function createClientConfig() {
       entry: {
         index: "./src/hydrate.tsx",
       },
+      define: {
+        "import.meta.env.PUBLIC_POSTHOG_KEY": JSON.stringify(
+          process.env.PUBLIC_POSTHOG_KEY ?? "",
+        ),
+        "import.meta.env.PUBLIC_POSTHOG_HOST": JSON.stringify(
+          process.env.PUBLIC_POSTHOG_HOST ?? "",
+        ),
+      },
     },
     resolve: {
       alias: {

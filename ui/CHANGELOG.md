@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.10.0
+
+### Minor Changes
+
+- fd43e99: Add fulfillment cost visibility and price locking to admin
+
+  - Add cost/margin columns to inventory table
+  - Add cost card to product edit sheet
+  - Add price lock toggle to product edit
+
 ## 1.9.0
 
 ### Minor Changes

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.10.2
+
+### Patch Changes
+
+- 3ba46b4: Fix local integration test database bootstrapping so the checkout flow test can use the repo's local Postgres credentials and create the `api_test` database when needed.
+- 3ba46b4: Harden PingPay webhook auth handling, add provider-test product resync coverage, and consolidate provider-test state migrations into one generated migration.
+
 ## 1.10.1
 
 ### Patch Changes

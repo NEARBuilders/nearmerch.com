@@ -39,6 +39,7 @@ import {
   getPhonePlaceholder,
   type CountryCode,
 } from '@/lib/phone';
+import { isCountrySupported, isStateSupported } from '@/lib/validation/address-rules';
 import {
   getPurchaseGatePluginId,
   usePurchaseGateAccessMap,
@@ -114,7 +115,10 @@ function CheckoutPage() {
   });
 
   const fieldRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const countries = useMemo(() => Country.getAllCountries(), []);
+  const countries = useMemo(
+    () => Country.getAllCountries().filter((c) => isCountrySupported(c.isoCode)),
+    [],
+  );
 
   useEffect(() => {
     fieldRefs.current.get('firstName')?.focus();
@@ -657,13 +661,16 @@ function CheckoutPage() {
                     if (!value) {
                       return 'Country / Region is required';
                     }
+                    if (!isCountrySupported(value)) {
+                      return 'Shipping to this country / region is currently not supported';
+                    }
                     return undefined;
                   }
                 }}
                 listeners={{
                   onChange: ({ value }) => {
                     if (value) {
-                      const states = State.getStatesOfCountry(value);
+                      const states = State.getStatesOfCountry(value).filter((s) => isStateSupported(value, s.isoCode, s.name));
                       setAvailableStates(states);
                       form.setFieldValue('state', '');
                       setShippingQuote(null);
@@ -754,6 +761,9 @@ function CheckoutPage() {
                       onBlur: ({ value }) => {
                         if (availableStates.length > 0 && !value) {
                           return 'State / Province is required';
+                        }
+                        if (value && !isStateSupported(form.state.values.country, value)) {
+                          return 'Delivery is not available for this region';
                         }
                         return undefined;
                       }

@@ -1,10 +1,10 @@
-interface FieldRule {
+export interface FieldRule {
   required?: boolean;
   maxLength?: number;
   errorMessage?: string;
 }
 
-interface ProviderRules {
+export interface ProviderAddressRules {
   addressLine1?: FieldRule;
   addressLine2?: FieldRule;
   phone?: FieldRule;
@@ -14,113 +14,147 @@ interface ProviderRules {
   state?: FieldRule;
 }
 
-export const PROVIDER_ADDRESS_RULES: Record<string, ProviderRules> = {
+export interface RestrictedStateRule {
+  codes?: readonly string[];
+  keywords?: readonly string[];
+}
+
+export interface ProviderConfig {
+  addressRules?: ProviderAddressRules;
+  unsupportedCountryCodes?: readonly string[];
+  restrictedStates?: Record<string, RestrictedStateRule>;
+  shippingRegions?: Record<string, readonly string[]>;
+}
+
+export const PROVIDER_CONFIG: Record<string, ProviderConfig> = {
   lulu: {
-    addressLine1: {
-      maxLength: 30,
-      errorMessage: 'Address is too long. Please use Address Line 2 for apartment/unit numbers.',
-    },
-    addressLine2: {
-      maxLength: 30,
-      errorMessage: 'Address Line 2 is too long.',
-    },
-    phone: {
-      required: true,
-      maxLength: 20,
-      errorMessage: 'Phone number is required for delivery.',
-    },
-    postcode: {
-      maxLength: 64,
-      errorMessage: 'ZIP/Postal code is too long.',
+    addressRules: {
+      addressLine1: {
+        maxLength: 30,
+        errorMessage: 'Address is too long. Please use Address Line 2 for apartment/unit numbers.',
+      },
+      addressLine2: {
+        maxLength: 30,
+        errorMessage: 'Address Line 2 is too long.',
+      },
+      phone: {
+        required: true,
+        maxLength: 20,
+        errorMessage: 'Phone number is required for delivery.',
+      },
+      postcode: {
+        maxLength: 64,
+        errorMessage: 'ZIP/Postal code is too long.',
+      },
     },
   },
 
-  printful: {},
+  printful: {
+    unsupportedCountryCodes: [
+      'BY',
+      'CU',
+      'IR',
+      'KP',
+      'PS',
+      'RU',
+      'SY',
+      'VE',
+    ],
+    restrictedStates: {
+      UA: {
+        codes: ['43', '40', '14', '09', 'cr', 'se', 'dn', 'lu'],
+        keywords: [
+          'crimea',
+          'krym',
+          'sevastopol',
+          'donetsk',
+          'donets',
+          'dpr',
+          'dnr',
+          'luhansk',
+          'lugansk',
+          'luhans',
+          'lpr',
+          'lnr',
+        ],
+      },
+    },
+    shippingRegions: {
+      USA: ['US'],
+      CANADA: ['CA'],
+      UK: ['GB'],
+      EFTA: ['IS', 'LI', 'NO', 'CH'],
+      EUROPE: [
+        'AL', 'AD', 'AT', 'BE', 'BA', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI',
+        'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'XK', 'LV', 'LT', 'LU', 'MT', 'MD',
+        'ME', 'NL', 'MK', 'PL', 'PT', 'RO', 'SM', 'RS', 'SK', 'SI', 'ES', 'SE',
+        'VA', 'UA',
+      ],
+      AUSTRALIA_NZ: ['AU', 'NZ'],
+      JAPAN: ['JP'],
+      BRAZIL: ['BR'],
+    },
+  },
 
   manual: {},
 
   gelato: {},
 };
 
-export type FieldName = keyof ProviderRules;
+/**
+ * Backward-compatible address rules dictionary derived from PROVIDER_CONFIG
+ */
+export const PROVIDER_ADDRESS_RULES: Record<string, ProviderAddressRules> = Object.fromEntries(
+  Object.entries(PROVIDER_CONFIG).map(([provider, config]) => [provider, config.addressRules || {}]),
+);
+
+export type FieldName = keyof ProviderAddressRules;
 
 /**
- * Country codes unsupported by Printful / fulfillment partners due to legal restrictions, sanctions, or carrier limitations.
- * Belarus (BY), Cuba (CU), Iran (IR), North Korea (KP), Palestine (PS - Gaza Strip), Russia (RU), Syria (SY), Venezuela (VE).
+ * Checks if a country code is supported by the active fulfillment providers in the cart.
  */
-export const UNSUPPORTED_COUNTRY_CODES = [
-  'BY',
-  'CU',
-  'IR',
-  'KP',
-  'PS',
-  'RU',
-  'SY',
-  'VE',
-] as const;
-
-export function isCountrySupported(countryCode: string): boolean {
+export function isCountrySupported(countryCode: string, providers?: string[]): boolean {
   if (!countryCode) return true;
-  return !UNSUPPORTED_COUNTRY_CODES.includes(countryCode.toUpperCase() as (typeof UNSUPPORTED_COUNTRY_CODES)[number]);
+  const code = countryCode.toUpperCase();
+  const activeProviders = providers && providers.length > 0 ? providers : Object.keys(PROVIDER_CONFIG);
+
+  return !activeProviders.some((providerId) => {
+    const config = PROVIDER_CONFIG[providerId.toLowerCase()];
+    return config?.unsupportedCountryCodes?.includes(code);
+  });
 }
 
 /**
- * Restricted sub-regions/states within supported countries (e.g. Crimea, Donetsk, Luhansk in Ukraine).
+ * Checks if a state / sub-region is supported by the active fulfillment providers in the cart.
  */
-export const RESTRICTED_STATE_KEYWORDS_UA = [
-  'crimea',
-  'krym',
-  'sevastopol',
-  'donetsk',
-  'donets',
-  'dpr',
-  'dnr',
-  'luhansk',
-  'lugansk',
-  'luhans',
-  'lpr',
-  'lnr',
-];
-
-export function isStateSupported(countryCode: string, stateCode: string, stateName?: string): boolean {
+export function isStateSupported(
+  countryCode: string,
+  stateCode: string,
+  stateName?: string,
+  providers?: string[],
+): boolean {
   if (!countryCode) return true;
   const country = countryCode.toUpperCase();
-  if (country === 'UA') {
-    const code = (stateCode || '').toLowerCase();
-    const name = (stateName || '').toLowerCase();
-    
-    // Check specific state ISO codes for Ukraine (43 = Crimea, 40 = Sevastopol, 14 = Donetsk, 09 = Luhansk)
-    if (['43', '40', '14', '09', 'cr', 'se', 'dn', 'lu'].includes(code)) {
-      return false;
+  const code = (stateCode || '').toLowerCase();
+  const name = (stateName || '').toLowerCase();
+  const activeProviders = providers && providers.length > 0 ? providers : Object.keys(PROVIDER_CONFIG);
+
+  return !activeProviders.some((providerId) => {
+    const config = PROVIDER_CONFIG[providerId.toLowerCase()];
+    const stateRule = config?.restrictedStates?.[country];
+    if (!stateRule) return false;
+
+    if (stateRule.codes?.some((c) => c.toLowerCase() === code)) {
+      return true;
     }
-    
-    // Check state name keywords
-    if (RESTRICTED_STATE_KEYWORDS_UA.some((keyword) => name.includes(keyword) || code.includes(keyword))) {
-      return false;
+
+    if (stateRule.keywords?.some((keyword) => name.includes(keyword.toLowerCase()) || code.includes(keyword.toLowerCase()))) {
+      return true;
     }
-  }
-  return true;
+
+    return false;
+  });
 }
-
-
-/**
- * Printful Shipping Regions based on printful_shipping_rates.csv
- */
-export const PRINTFUL_SHIPPING_REGIONS = {
-  USA: ['US'],
-  CANADA: ['CA'],
-  UK: ['GB'],
-  EFTA: ['IS', 'LI', 'NO', 'CH'],
-  EUROPE: [
-    'AL', 'AD', 'AT', 'BE', 'BA', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI',
-    'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'XK', 'LV', 'LT', 'LU', 'MT', 'MD',
-    'ME', 'NL', 'MK', 'PL', 'PT', 'RO', 'SM', 'RS', 'SK', 'SI', 'ES', 'SE',
-    'VA', 'UA',
-  ],
-  AUSTRALIA_NZ: ['AU', 'NZ'],
-  JAPAN: ['JP'],
-  BRAZIL: ['BR'],
-} as const;
 
 export type PrintfulShippingRegionName =
   | 'USA'
@@ -136,17 +170,20 @@ export type PrintfulShippingRegionName =
 export function getPrintfulShippingRegion(countryCode: string): PrintfulShippingRegionName {
   if (!countryCode) return 'Worldwide';
   const code = countryCode.toUpperCase();
+  const regions = PROVIDER_CONFIG.printful?.shippingRegions;
+  if (!regions) return 'Worldwide';
 
-  if (PRINTFUL_SHIPPING_REGIONS.USA.includes(code as any)) return 'USA';
-  if (PRINTFUL_SHIPPING_REGIONS.CANADA.includes(code as any)) return 'Canada';
-  if (PRINTFUL_SHIPPING_REGIONS.UK.includes(code as any)) return 'UK';
-  if (PRINTFUL_SHIPPING_REGIONS.EFTA.includes(code as any)) return 'EFTA States';
-  if (PRINTFUL_SHIPPING_REGIONS.EUROPE.includes(code as any)) return 'Europe';
-  if (PRINTFUL_SHIPPING_REGIONS.AUSTRALIA_NZ.includes(code as any)) return 'Australia / New Zealand';
-  if (PRINTFUL_SHIPPING_REGIONS.JAPAN.includes(code as any)) return 'Japan';
-  if (PRINTFUL_SHIPPING_REGIONS.BRAZIL.includes(code as any)) return 'Brazil';
+  if (regions.USA?.includes(code)) return 'USA';
+  if (regions.CANADA?.includes(code)) return 'Canada';
+  if (regions.UK?.includes(code)) return 'UK';
+  if (regions.EFTA?.includes(code)) return 'EFTA States';
+  if (regions.EUROPE?.includes(code)) return 'Europe';
+  if (regions.AUSTRALIA_NZ?.includes(code)) return 'Australia / New Zealand';
+  if (regions.JAPAN?.includes(code)) return 'Japan';
+  if (regions.BRAZIL?.includes(code)) return 'Brazil';
 
   return 'Worldwide';
 }
+
 
 

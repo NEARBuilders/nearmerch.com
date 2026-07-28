@@ -116,8 +116,8 @@ function CheckoutPage() {
 
   const fieldRefs = useRef<Map<string, HTMLElement>>(new Map());
   const countries = useMemo(
-    () => Country.getAllCountries().filter((c) => isCountrySupported(c.isoCode)),
-    [],
+    () => Country.getAllCountries().filter((c) => isCountrySupported(c.isoCode, providers)),
+    [providers],
   );
 
   useEffect(() => {
@@ -661,7 +661,7 @@ function CheckoutPage() {
                     if (!value) {
                       return 'Country / Region is required';
                     }
-                    if (!isCountrySupported(value)) {
+                    if (!isCountrySupported(value, providers)) {
                       return 'Shipping to this country / region is currently not supported';
                     }
                     return undefined;
@@ -670,7 +670,7 @@ function CheckoutPage() {
                 listeners={{
                   onChange: ({ value }) => {
                     if (value) {
-                      const states = State.getStatesOfCountry(value).filter((s) => isStateSupported(value, s.isoCode, s.name));
+                      const states = State.getStatesOfCountry(value).filter((s) => isStateSupported(value, s.isoCode, s.name, providers));
                       setAvailableStates(states);
                       form.setFieldValue('state', '');
                       setShippingQuote(null);
@@ -762,7 +762,7 @@ function CheckoutPage() {
                         if (availableStates.length > 0 && !value) {
                           return 'State / Province is required';
                         }
-                        if (value && !isStateSupported(form.state.values.country, value)) {
+                        if (value && !isStateSupported(form.state.values.country, value, undefined, providers)) {
                           return 'Delivery is not available for this region';
                         }
                         return undefined;

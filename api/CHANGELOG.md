@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.1
+
+### Patch Changes
+
+- 29040ec: Require admin authentication or a valid HMAC signature for manual order-status webhooks.
+
 ## 1.12.0
 
 ### Minor Changes

@@ -214,7 +214,7 @@ function MarketplaceHome() {
   return (
     <PageTransition className="m-0 p-0 relative">
       {activeSlide && <VideoBackground position="absolute" height="calc(100vh - 80px)" />}
-      {!activeSlide && (isCollectionsLoading || collections.length === 0) && <VideoBackground position="absolute" height="calc(100vh - 80px)" />}
+      {!activeSlide && isCollectionsLoading && <VideoBackground position="absolute" height="calc(100vh - 80px)" />}
       {activeSlide && (
       <section className="pt-24 md:pt-32 relative z-10 min-h-[calc(100vh-120px)] flex items-center">
         <div className="w-full max-w-[1408px] mx-auto px-4 md:px-8 lg:px-16">
@@ -400,7 +400,7 @@ function MarketplaceHome() {
       </section>
       )}
 
-      {!activeSlide && (isCollectionsLoading || collections.length === 0) && <MarketplaceSkeletonLoader />}
+      {!activeSlide && isCollectionsLoading && <MarketplaceSkeletonLoader />}
 
       {activeSlide && (
             <div className="lg:hidden rounded-2xl bg-background/60 backdrop-blur-sm border border-border/60 px-4 md:px-6 py-4 md:py-6 relative z-10 mx-4 md:mx-8 -mt-4 md:mt-0 mb-6 md:mb-8">

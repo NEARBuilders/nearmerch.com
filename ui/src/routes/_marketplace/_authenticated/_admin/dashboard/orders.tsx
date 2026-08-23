@@ -455,9 +455,28 @@ function AdminOrdersPage() {
   }, [filteredOrders, routeSearch.orderId]);
 
   const selectedOrders = useMemo(() => {
-    const selectedIndices = Object.keys(rowSelection).filter(key => rowSelection[key]);
-    return selectedIndices.map(index => filteredOrders[parseInt(index)]).filter(Boolean);
+    const ordersById = new Map(filteredOrders.map((order) => [order.id, order]));
+    return Object.keys(rowSelection)
+      .filter((orderId) => rowSelection[orderId])
+      .map((orderId) => ordersById.get(orderId))
+      .filter((order): order is Order => Boolean(order));
   }, [rowSelection, filteredOrders]);
+
+  useEffect(() => {
+    const visibleOrderIds = new Set(filteredOrders.map((order) => order.id));
+
+    setRowSelection((currentSelection) => {
+      const visibleSelection = Object.fromEntries(
+        Object.entries(currentSelection).filter(
+          ([orderId, isSelected]) => isSelected && visibleOrderIds.has(orderId),
+        ),
+      );
+
+      return Object.keys(visibleSelection).length === Object.keys(currentSelection).length
+        ? currentSelection
+        : visibleSelection;
+    });
+  }, [filteredOrders]);
 
   const handleDeleteClick = () => {
     if (selectedOrders.length === 0) return;
@@ -772,6 +791,7 @@ function AdminOrdersPage() {
               data={filteredOrders}
               rowSelection={rowSelection}
               onRowSelectionChange={setRowSelection}
+              getRowId={(order) => order.id}
             />
           </div>
 

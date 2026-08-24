@@ -455,8 +455,7 @@ function AdminOrdersPage() {
   }, [filteredOrders, routeSearch.orderId]);
 
   const selectedOrders = useMemo(() => {
-    const selectedIndices = Object.keys(rowSelection).filter(key => rowSelection[key]);
-    return selectedIndices.map(index => filteredOrders[parseInt(index)]).filter(Boolean);
+    return filteredOrders.filter((order) => rowSelection[order.id]);
   }, [rowSelection, filteredOrders]);
 
   const handleDeleteClick = () => {
@@ -770,6 +769,7 @@ function AdminOrdersPage() {
             <DataTable 
               columns={columns} 
               data={filteredOrders}
+              getRowId={(order) => order.id}
               rowSelection={rowSelection}
               onRowSelectionChange={setRowSelection}
             />

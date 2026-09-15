@@ -170,8 +170,8 @@ export const contract = oc.router({
         collectionSlugs: z.array(z.string()).optional(),
         tags: z.array(z.string()).optional(),
         featured: z.boolean().optional(),
-        limit: z.number().int().positive().max(500).default(50),
-        offset: z.number().int().min(0).default(0),
+        limit: z.coerce.number<number>().int().positive().max(500).default(50),
+        offset: z.coerce.number<number>().int().min(0).default(0),
         includeUnlisted: z.boolean().optional(),
       }),
     )

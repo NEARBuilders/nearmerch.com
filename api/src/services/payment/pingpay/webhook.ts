@@ -1,10 +1,15 @@
 import { Effect, Schedule } from 'every-plugin/effect';
 import { ORPCError } from 'every-plugin/orpc';
 import type { MarketplaceRuntime, PaymentProvider } from '../../../runtime';
+import type { OrderStatus } from '../../../schema';
 import { OrderStore } from '../../../store/orders';
 import { ProviderConfigStore } from '../../../store/providers';
 import { EmailService } from '../../email';
 import { processPaymentSuccessEffect } from '../payment-success';
+
+export function canApplyPaymentFailure(status: OrderStatus): boolean {
+  return status === 'draft_created' || status === 'pending' || status === 'payment_pending';
+}
 
 export function handlePingPayWebhookEffect(options: {
   runtime: MarketplaceRuntime;
@@ -87,6 +92,15 @@ export function handlePingPayWebhookEffect(options: {
 
       case 'payment.failed':
         console.log('[PingPay Webhook] Processing payment failed event', { orderId: resolvedOrderId(order.id) });
+
+        if (!canApplyPaymentFailure(order.status)) {
+          console.log('[PingPay Webhook] Order is no longer awaiting payment, skipping failure event', {
+            orderId: order.id,
+            currentStatus: order.status,
+          });
+          return { received: true } as const;
+        }
+
         yield* store.updateStatus(
           resolvedOrderId(order.id),
           'payment_failed',

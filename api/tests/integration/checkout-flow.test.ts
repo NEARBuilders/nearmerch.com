@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { getPluginClient, runMigrations, teardown } from '../setup';
+import { getPluginClient, getTestDb, runMigrations, teardown } from '../setup';
 import { clearOrders, clearProducts, createTestProduct, createTestProductVariant } from '../helpers';
 import { createHmac } from 'crypto';
+import { eq } from 'drizzle-orm';
+import * as schema from '@/db/schema';
 
 describe('Checkout Flow E2E', () => {
   beforeAll(async () => {
@@ -204,6 +206,70 @@ describe('Checkout Flow E2E', () => {
 
       const order = await client.getOrder({ id: orderId });
       expect(order.order.status).toBe('payment_failed');
+    });
+
+    it('should not downgrade a processing order when a late payment failure arrives', async () => {
+      const client = await getPluginClient({ nearAccountId: TEST_USER });
+
+      const quoteResult = await client.quote({
+        items: mockCartItems,
+        shippingAddress: mockShippingAddress,
+      });
+
+      const selectedRates: Record<string, string> = {};
+      quoteResult.providerBreakdown.forEach((provider) => {
+        selectedRates[provider.provider] = provider.selectedShipping.rateId;
+      });
+
+      const checkoutResult = await client.createCheckout({
+        items: mockCartItems,
+        shippingAddress: mockShippingAddress,
+        selectedRates,
+        shippingCost: quoteResult.shippingCost,
+        successUrl: 'https://example.com/success',
+        cancelUrl: 'https://example.com/cancel',
+        paymentProvider: 'pingpay',
+      });
+
+      const orderId = checkoutResult.orderId;
+      const sessionId = checkoutResult.checkoutSessionId;
+
+      await getTestDb()
+        .update(schema.orders)
+        .set({ status: 'processing' })
+        .where(eq(schema.orders.id, orderId));
+
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const webhookPayload = {
+        id: 'whevt_late_failed123',
+        type: 'payment.failed',
+        created: new Date().toISOString(),
+        data: {
+          paymentId: 'pay_late_failed123',
+          status: 'FAILED',
+          amount: '1000000',
+          assetId: 'NEAR:USDC',
+          payerAddress: 'user.near',
+          recipientAddress: 'near-merch-store.near',
+          merchantId: 'merch_test',
+        },
+        sessionId,
+        metadata: {
+          orderId,
+        },
+      };
+
+      const payloadString = JSON.stringify(webhookPayload);
+      const signature = generatePingPaySignature(timestamp, payloadString, TEST_WEBHOOK_SECRET);
+      const webhookHeaders = createWebhookHeaders(signature, timestamp);
+      const webhookClient = await getPluginClient({ nearAccountId: TEST_USER, reqHeaders: webhookHeaders });
+
+      const webhookResult = await webhookClient.pingWebhook(webhookPayload);
+
+      expect(webhookResult.received).toBe(true);
+
+      const order = await client.getOrder({ id: orderId });
+      expect(order.order.status).toBe('processing');
     });
 
     it('should only find an order by checkout session ID for its owner', async () => {

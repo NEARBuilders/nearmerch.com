@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { contract } from "../../src/contract";
 
 const inputSchema = contract.getProducts["~orpc"].inputSchema!;

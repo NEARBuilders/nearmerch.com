@@ -131,6 +131,48 @@ describe('Database Integration Tests', () => {
       expect(searchResult.products).toBeDefined();
       expect(searchResult.products.length).toBeGreaterThan(0);
     });
+
+    it('should filter products before applying the search result limit', async () => {
+      const client = await getPluginClient({ nearAccountId: TEST_USER });
+
+      for (let index = 0; index < 5; index += 1) {
+        await createTestProduct(`prod_filler_${index}`, {
+          name: `Filler Product ${index}`,
+          tags: ['filler'],
+          fulfillmentProvider: 'manual',
+          source: 'test',
+        });
+      }
+
+      await createTestProduct('prod_search_target', {
+        name: 'AIAYN Search Target',
+        tags: ['Rare Merch'],
+        fulfillmentProvider: 'manual',
+        source: 'test',
+      });
+
+      const titleResult = await client.searchProducts({ query: 'aiayn', limit: 1 });
+      const tagResult = await client.searchProducts({ query: 'rare merch', limit: 1 });
+
+      expect(titleResult.products.map((product) => product.id)).toEqual(['prod_search_target']);
+      expect(tagResult.products.map((product) => product.id)).toEqual(['prod_search_target']);
+    });
+
+    it('should exclude unlisted products from search results', async () => {
+      const client = await getPluginClient({ nearAccountId: TEST_USER });
+
+      await createTestProduct('prod_hidden_search_target', {
+        name: 'Hidden AIAYN Product',
+        tags: ['Rare Merch'],
+        listed: false,
+        fulfillmentProvider: 'manual',
+        source: 'test',
+      });
+
+      const result = await client.searchProducts({ query: 'aiayn', limit: 10 });
+
+      expect(result.products).toEqual([]);
+    });
   });
 
   describe('Collection Operations', () => {

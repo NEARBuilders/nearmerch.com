@@ -22,7 +22,7 @@ export const Route = createFileRoute('/_marketplace/search')({
     category: typeof search.category === 'string' ? search.category : undefined,
   }),
   loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(productLoaders.list({ limit: 50 }));
+    await context.queryClient.ensureQueryData(productLoaders.list({ limit: 100 }));
   },
   component: SearchPage,
 });
@@ -31,11 +31,11 @@ function SearchPage() {
   const { q } = Route.useSearch();
 
   const { data: searchData, isFetching: isSearching } = useSearchProducts(q || '', {
-    limit: 50,
+    limit: 100,
   });
 
   const { data: allProductsData, isLoading } = useProducts({
-    limit: 50,
+    limit: 100,
   });
 
   const normalizeSearchTerm = (term: string): string => {

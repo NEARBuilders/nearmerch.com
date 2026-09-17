@@ -1,4 +1,4 @@
-import { and, asc, count, eq, inArray, like, lt } from "drizzle-orm";
+import { and, asc, count, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "every-plugin/effect";
 import * as schema from "../db/schema";
 import type {
@@ -504,26 +504,25 @@ export const ProductStoreLive = Layer.effect(
         Effect.tryPromise({
           try: async () => {
             const searchTerm = `%${query}%`;
-
-            const conditions = [eq(schema.products.listed, true)];
+            const tagMatch = sql<boolean>`exists (
+              select 1
+              from jsonb_array_elements_text(${schema.products.tags}) as product_tag(value)
+              where product_tag.value ilike ${searchTerm}
+            )`;
 
             const results = await db
               .select()
               .from(schema.products)
-              .where(and(...conditions))
+              .where(
+                and(
+                  eq(schema.products.listed, true),
+                  or(ilike(schema.products.name, searchTerm), tagMatch),
+                ),
+              )
+              .orderBy(asc(schema.products.name), asc(schema.products.id))
               .limit(limit);
 
-            const allProducts = await Promise.all(results.map(rowToProduct));
-
-            return allProducts.filter((product) => {
-              const nameMatch = product.title
-                .toLowerCase()
-                .includes(query.toLowerCase());
-              const tagMatch = product.tags.some((tag) =>
-                tag.toLowerCase().includes(query.toLowerCase()),
-              );
-              return nameMatch || tagMatch;
-            });
+            return Promise.all(results.map(rowToProduct));
           },
           catch: (error) => new Error(`Failed to search products: ${error}`),
         }),

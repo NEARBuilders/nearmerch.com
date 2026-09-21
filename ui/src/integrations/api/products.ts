@@ -32,6 +32,26 @@ export type Product = Awaited<
 >["product"];
 export type ProductImage = Product["images"][number];
 
+function isProductNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const candidate = error as {
+    code?: unknown;
+    status?: unknown;
+    response?: {
+      status?: unknown;
+      data?: { code?: unknown };
+    };
+  };
+
+  return (
+    candidate.code === "NOT_FOUND" ||
+    candidate.status === 404 ||
+    candidate.response?.status === 404 ||
+    candidate.response?.data?.code === "NOT_FOUND"
+  );
+}
+
 export function getPrimaryCategoryName(product: Product): string {
   return product.collections?.[0]?.name ?? "";
 }
@@ -137,11 +157,22 @@ export function useProductsByIds(ids: string[]) {
       queryFn: () => apiClient.getProduct({ id }),
       enabled: !!id,
     })),
-    combine: (results) => ({
-      data: results.map((r) => r.data?.product).filter(Boolean) as Product[],
-      isLoading: results.some((r) => r.isLoading),
-      isError: results.some((r) => r.isError),
-    }),
+    combine: (results) => {
+      const missingProductIds = results.reduce<string[]>((missingIds, result, index) => {
+        const id = ids[index];
+        if (id && result.isError && isProductNotFoundError(result.error)) {
+          missingIds.push(id);
+        }
+        return missingIds;
+      }, []);
+
+      return {
+        data: results.map((r) => r.data?.product).filter(Boolean) as Product[],
+        isLoading: results.some((r) => r.isLoading),
+        isError: results.some((r) => r.isError),
+        missingProductIds,
+      };
+    },
   });
 }
 

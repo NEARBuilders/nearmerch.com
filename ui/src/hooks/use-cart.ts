@@ -37,7 +37,8 @@ export function useCart() {
     return Array.from(uniqueProductIds);
   }, [items]);
 
-  const { data: products, isLoading } = useProductsByIds(productIds);
+  const { data: products, isLoading, missingProductIds } =
+    useProductsByIds(productIds);
 
   const cartItems: CartItemWithProduct[] = useMemo(() => {
     const result: CartItemWithProduct[] = [];
@@ -60,14 +61,14 @@ export function useCart() {
   useEffect(() => {
     if (isLoading) return;
 
-    const validProductIds = new Set(products.map((p) => p.slug));
+    const missingIds = new Set(missingProductIds);
 
     Object.entries(items).forEach(([itemId, item]) => {
-      if (!validProductIds.has(item.productId)) {
+      if (missingIds.has(item.productId)) {
         removeItem(itemId);
       }
     });
-  }, [products, items, isLoading, removeItem]);
+  }, [missingProductIds, items, isLoading, removeItem]);
 
   // Memoize computed values
   const totalCount = useMemo(

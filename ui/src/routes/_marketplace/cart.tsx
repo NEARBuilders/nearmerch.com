@@ -12,6 +12,7 @@ import {
   type ProductMetadata,
   type PurchaseGatePluginId,
 } from "@/integrations/api";
+import { getCartItemReactKey } from "@/stores/cart-store";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft, Lock, Minus, Plus, X } from "lucide-react";
 
@@ -99,7 +100,7 @@ function CartPage() {
                     null;
 
                   return (
-                    <div key={item.id}>
+                    <div key={getCartItemReactKey(item)}>
                     <ProductCard
                       product={item.product}
                       variant="horizontal"

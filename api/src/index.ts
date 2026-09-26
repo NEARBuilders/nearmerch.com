@@ -879,7 +879,10 @@ export default createPlugin({
 
             // Don't leak provider/internal details to the UI.
             if (error instanceof CheckoutError) {
-              if (error.code === "INVALID_ADDRESS") {
+              if (
+                error.code === "INVALID_ADDRESS" ||
+                error.code === "VARIANT_UNAVAILABLE"
+              ) {
                 throw new ORPCError("BAD_REQUEST", {
                   message:
                     error.cause instanceof Error

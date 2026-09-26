@@ -10,6 +10,7 @@ export type CheckoutErrorCode =
   | 'INVALID_SHIPPING_RATE'
   | 'NO_RATES_AVAILABLE'
   | 'INVALID_ADDRESS'
+  | 'VARIANT_UNAVAILABLE'
   | 'UNKNOWN';
 
 export class CheckoutError extends Data.TaggedError('CheckoutError')<{

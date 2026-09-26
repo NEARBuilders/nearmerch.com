@@ -39,10 +39,32 @@ interface ProviderItemGroup {
 function selectCheckoutVariant(
   product: Product,
   variantId?: string,
-): ProductVariant | undefined {
-  return variantId
+): Effect.Effect<ProductVariant | undefined, CheckoutError> {
+  const selectedVariant = variantId
     ? product.variants.find((variant) => variant.id === variantId)
-    : product.variants[0];
+    : product.variants.find((variant) => variant.availableForSale);
+
+  if (selectedVariant && !selectedVariant.availableForSale) {
+    return Effect.fail(
+      new CheckoutError({
+        code: "VARIANT_UNAVAILABLE",
+        productId: product.id,
+        cause: new Error(`Variant is unavailable: ${selectedVariant.id}`),
+      }),
+    );
+  }
+
+  if (!variantId && product.variants.length > 0 && !selectedVariant) {
+    return Effect.fail(
+      new CheckoutError({
+        code: "VARIANT_UNAVAILABLE",
+        productId: product.id,
+        cause: new Error(`No variants are available for ${product.title}`),
+      }),
+    );
+  }
+
+  return Effect.succeed(selectedVariant);
 }
 
 function getManualNotificationConfig(metadata?: ProductMetadata) {
@@ -373,7 +395,7 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
                 );
               }
 
-              const selectedVariant = selectCheckoutVariant(
+              const selectedVariant = yield* selectCheckoutVariant(
                 product,
                 item.variantId,
               );
@@ -641,7 +663,7 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
                 );
               }
 
-              const selectedVariant = selectCheckoutVariant(
+              const selectedVariant = yield* selectCheckoutVariant(
                 product,
                 item.variantId,
               );

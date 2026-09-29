@@ -22,6 +22,7 @@ import {
   ProductSchema,
   ProductTypeSchema,
   ProviderConfigSchema,
+  ProviderNameSchema,
   ProviderTestRunSchema,
   ProviderTestScenarioSchema,
   ProviderTestStateSchema,
@@ -39,7 +40,7 @@ import {
   MerchBoxItemSchema,
   MerchBoxRequestSchema,
 } from "./schema";
-import { SyncProgressEventSchema, ProviderCatalogProductSchema, CatalogSlotSchema, ProviderCatalogVariantSchema } from "./services/fulfillment/schema";
+import { SyncProgressEventSchema, ProviderCatalogProductSchema, CatalogCollectionSchema, CatalogSlotSchema, ProviderCatalogVariantSchema } from "./services/fulfillment/schema";
 
 export const contract = oc.router({
   ping: oc
@@ -659,7 +660,7 @@ export const contract = oc.router({
         "Returns the configuration for a fulfillment provider including webhook settings.",
       tags: ["Admin", "Providers"],
     })
-    .input(z.object({ provider: z.enum(['printful', 'lulu', 'manual']) }))
+    .input(z.object({ provider: ProviderNameSchema }))
     .output(z.object({ config: ProviderConfigSchema.nullable() }))
     .errors({ UNAUTHORIZED }),
 
@@ -684,7 +685,7 @@ export const contract = oc.router({
       description: "Disables webhook notifications for a fulfillment provider.",
       tags: ["Admin", "Providers"],
     })
-    .input(z.object({ provider: z.enum(['printful', 'lulu', 'manual']) }))
+    .input(z.object({ provider: ProviderNameSchema }))
     .output(z.object({ success: z.boolean() }))
     .errors({ BAD_REQUEST, UNAUTHORIZED }),
 
@@ -696,7 +697,7 @@ export const contract = oc.router({
       description: "Tests the connection to a fulfillment provider.",
       tags: ["Admin", "Providers"],
     })
-    .input(z.object({ provider: z.enum(['printful', 'lulu', 'manual']) }))
+    .input(z.object({ provider: ProviderNameSchema }))
     .output(z.object({
       success: z.boolean(),
       message: z.string().optional(),
@@ -712,7 +713,7 @@ export const contract = oc.router({
       description: "Returns the latest provider test scenario and step results.",
       tags: ["Admin", "Providers"],
     })
-    .input(z.object({ provider: z.enum(['printful', 'lulu', 'manual']) }))
+    .input(z.object({ provider: ProviderNameSchema }))
     .output(z.object({ state: ProviderTestStateSchema.nullable() }))
     .errors({ UNAUTHORIZED }),
 
@@ -724,7 +725,7 @@ export const contract = oc.router({
       description: "Persists a provider test scenario and its hidden test product.",
       tags: ["Admin", "Providers"],
     })
-    .input(z.object({ provider: z.enum(['printful', 'lulu', 'manual']), scenario: ProviderTestScenarioSchema }))
+    .input(z.object({ provider: ProviderNameSchema, scenario: ProviderTestScenarioSchema }))
     .output(z.object({ state: ProviderTestStateSchema }))
     .errors({ UNAUTHORIZED }),
 
@@ -736,7 +737,7 @@ export const contract = oc.router({
       description: "Executes a single provider test step and persists the result.",
       tags: ["Admin", "Providers"],
     })
-    .input(z.object({ provider: z.enum(['printful', 'lulu', 'manual']), step: ProviderTestStepSchema }))
+    .input(z.object({ provider: ProviderNameSchema, step: ProviderTestStepSchema }))
     .output(ProviderTestRunSchema)
     .errors({ UNAUTHORIZED }),
 
@@ -749,7 +750,7 @@ export const contract = oc.router({
         "Returns field configurations for each fulfillment provider, used to display product details.",
       tags: ["Admin", "Providers"],
     })
-    .input(z.object({ provider: z.enum(['printful', 'lulu', 'manual']).optional() }))
+    .input(z.object({ provider: ProviderNameSchema.optional() }))
     .output(z.record(z.string(), z.any()))
     .errors({ UNAUTHORIZED }),
 
@@ -1020,13 +1021,15 @@ export const contract = oc.router({
       tags: ["Admin", "Catalog"],
     })
     .input(z.object({
-      provider: z.enum(["printful", "lulu", "manual"]),
+      provider: ProviderNameSchema,
       limit: z.number().int().positive().max(100).default(50),
       offset: z.number().int().min(0).default(0),
+      collectionId: z.string().min(1).optional(),
     }))
     .output(z.object({
       products: z.array(ProviderCatalogProductSchema),
       total: z.number(),
+      collections: z.array(CatalogCollectionSchema).optional(),
     }))
     .errors({ UNAUTHORIZED }),
 
@@ -1039,7 +1042,7 @@ export const contract = oc.router({
       tags: ["Admin", "Catalog"],
     })
     .input(z.object({
-      provider: z.enum(["printful", "lulu", "manual"]),
+      provider: ProviderNameSchema,
       id: z.string(),
     }))
     .output(z.object({
@@ -1056,7 +1059,7 @@ export const contract = oc.router({
       tags: ["Admin", "Catalog"],
     })
     .input(z.object({
-      provider: z.enum(["printful", "lulu", "manual"]),
+      provider: ProviderNameSchema,
       id: z.string(),
     }))
     .output(z.object({
@@ -1073,7 +1076,7 @@ export const contract = oc.router({
       tags: ["Admin", "Fulfillment"],
     })
     .input(z.object({
-      provider: z.enum(["printful", "lulu", "manual"]),
+      provider: ProviderNameSchema,
       catalogProductId: z.string(),
     }))
     .output(z.object({

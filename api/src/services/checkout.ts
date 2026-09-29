@@ -21,6 +21,18 @@ import { CheckoutError } from "./checkout/errors";
 import { getProvidersAddressRequirementError } from "./checkout/provider-address-requirements";
 
 
+const PROVIDER_TEST_SOURCE_PREFIX = "provider-test:";
+
+function isCheckoutEligibleProduct(product: { listed?: boolean; source?: string } | null): boolean {
+  if (!product) {
+    return false;
+  }
+  if (product.listed) {
+    return true;
+  }
+  return typeof product.source === "string" && product.source.startsWith(PROVIDER_TEST_SOURCE_PREFIX);
+}
+
 interface ProviderItemGroup {
   item: CheckoutItemInput;
   productId: string;
@@ -389,7 +401,7 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
 
             for (const item of items) {
               const product = yield* productStore.find(item.productId);
-              if (!product || !product.listed) {
+              if (!product || !isCheckoutEligibleProduct(product)) {
                 return yield* Effect.fail(
                   new Error(`Product not found: ${item.productId}`),
                 );
@@ -657,7 +669,7 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
 
             for (const item of items) {
               const product = yield* productStore.find(item.productId);
-              if (!product || !product.listed) {
+              if (!product || !isCheckoutEligibleProduct(product)) {
                 return yield* Effect.fail(
                   new Error(`Product not found: ${item.productId}`),
                 );

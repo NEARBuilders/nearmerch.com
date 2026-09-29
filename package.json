@@ -52,6 +52,8 @@
     "db:studio": "bun run --cwd api drizzle-kit studio",
     "db:generate": "bun run --cwd api drizzle-kit generate",
     "db:migrate": "bun run --cwd api drizzle-kit migrate",
+    "db:seed-catalog": "bun run --cwd api scripts/seed-catalog.ts",
+    "db:seed-qikink": "bun run --cwd api scripts/seed-qikink-products.ts",
     "test": "bun run test:api && bun run --cwd ui test && bun run --cwd host test",
     "test:api": "cd api && bun test tests/integration/ tests/unit/",
     "test:integration": "cd api && bun test tests/integration/"

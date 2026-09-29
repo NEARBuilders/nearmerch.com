@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Effect } from 'every-plugin/effect';
-import { assertOwnedTestProduct, deriveSelectedRates, resolveTestProduct } from '../../src/services/provider-tests';
+import {
+  assertOwnedTestProduct,
+  defaultShippingAddressForProvider,
+  deriveSelectedRates,
+  QIKINK_PROVIDER_TEST_ADDRESS,
+  resolveTestProduct,
+} from '../../src/services/provider-tests';
 
 describe('provider test helpers', () => {
   it('derives selected rates from quote when scenario rates are absent', () => {
@@ -107,5 +113,95 @@ describe('provider test helpers', () => {
       thumbnailImage: undefined,
     }));
     expect(updateListing).toHaveBeenCalledWith('prod_1', false);
+  });
+
+  it('uses an Indian phone+pincode address for Qikink and keeps the US default for other providers', () => {
+    expect(defaultShippingAddressForProvider('qikink')).toEqual(QIKINK_PROVIDER_TEST_ADDRESS);
+    expect(QIKINK_PROVIDER_TEST_ADDRESS.country).toBe('IN');
+    expect(QIKINK_PROVIDER_TEST_ADDRESS.phone).toBe('9876543210');
+    expect(QIKINK_PROVIDER_TEST_ADDRESS.postCode).toBe('400001');
+    expect(defaultShippingAddressForProvider('printful').country).toBe('US');
+    expect(defaultShippingAddressForProvider('lulu').country).toBe('US');
+    expect(defaultShippingAddressForProvider('manual').country).toBe('US');
+  });
+
+  it('re-upserts an existing Qikink test product so T2/T4 config and design files are present', async () => {
+    const upsert = vi.fn().mockReturnValue(Effect.succeed({ id: 'prod_qikink' }));
+    const updateProduct = vi.fn();
+    const updateListing = vi.fn().mockReturnValue(Effect.succeed({ id: 'prod_qikink' }));
+
+    const existingProduct = {
+      id: 'prod_qikink',
+      slug: 'provider-test-qikink',
+      title: 'Existing Qikink Test Product',
+      price: 25,
+      currency: 'USD',
+      tags: [],
+      options: [],
+      images: [],
+      variants: [{ id: 'variant_old', name: 'Old', price: 25, currency: 'USD', attributes: [], inStock: true }],
+      designFiles: [],
+      fulfillmentProvider: 'qikink',
+      source: 'provider-test:qikink',
+      metadata: { fees: [] },
+    } as const;
+
+    const stateStore = {
+      getState: vi.fn().mockReturnValue(Effect.succeed({
+        provider: 'qikink',
+        testProductId: 'prod_qikink',
+        selectedRates: undefined,
+        scenario: { quantity: 1, product: {} },
+        latestOrderId: null,
+        latestStepResults: undefined,
+        latestWebhookPayloads: undefined,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+      upsertState: vi.fn().mockReturnValue(Effect.succeed(null)),
+    };
+
+    const productStore = {
+      findById: vi.fn().mockReturnValue(Effect.succeed(existingProduct)),
+      findBySource: vi.fn(),
+      findBySlug: vi.fn(),
+      upsert: upsert as any,
+      updateProduct,
+      updateListing,
+    };
+
+    await resolveTestProduct({
+      provider: 'qikink',
+      scenario: { quantity: 1, product: {} },
+      productStore: productStore as never,
+      stateStore: stateStore as never,
+    });
+
+    expect(updateProduct).not.toHaveBeenCalled();
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'prod_qikink',
+      slug: 'provider-test-qikink',
+      fulfillmentProvider: 'qikink',
+      variants: [
+        expect.objectContaining({
+          sku: 'UOsRgHs-BkCm-XS',
+          fulfillmentConfig: expect.objectContaining({
+            providerName: 'qikink',
+            providerConfig: expect.objectContaining({
+              sku: 'UOsRgHs-BkCm-XS',
+              searchFromMyProducts: 1,
+              placementSku: 'Front',
+              catalogProductId: 'qikink-unisex-oversized-raglan',
+              catalogVariantId: 'qikink-UOsRgHs-BkCm-XS',
+              basePriceInr: 378,
+              designSku: 'ereneyes',
+              storeSku: 'v-9Ryj3ieHaVZW0M8OPRAhubTergzY-HeV',
+            }),
+            files: [],
+          }),
+        }),
+      ],
+    }));
+    expect(updateListing).toHaveBeenCalledWith('prod_qikink', false);
   });
 });

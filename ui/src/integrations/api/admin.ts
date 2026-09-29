@@ -1,4 +1,5 @@
 import { apiClient } from "@/utils/orpc";
+import type { ProviderName } from "@/lib/providers";
 import type { SyncProgressEvent } from "../../../../api/src/services/fulfillment/schema";
 import type { ProductImage } from "./products";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,7 +8,7 @@ import { useState, useCallback, useRef } from "react";
 
 const catalogKeys = {
   all: ["catalog"] as const,
-  list: (provider: string, options?: { limit?: number; offset?: number }) =>
+  list: (provider: string, options?: { limit?: number; offset?: number; collectionId?: string }) =>
     [...catalogKeys.all, provider, options] as const,
   detail: (provider: string, id: string) =>
     [...catalogKeys.all, provider, "detail", id] as const,
@@ -28,15 +29,20 @@ const adminProductKeys = {
 
 export function useBrowseCatalog(
   provider: string,
-  options?: { limit?: number; offset?: number; enabled?: boolean },
+  options?: { limit?: number; offset?: number; collectionId?: string; enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: catalogKeys.list(provider, options),
+    queryKey: catalogKeys.list(provider, {
+      limit: options?.limit,
+      offset: options?.offset,
+      collectionId: options?.collectionId,
+    }),
     queryFn: () =>
       apiClient.browseProviderCatalog({
-        provider: provider as "printful" | "lulu" | "manual",
+        provider: provider as ProviderName,
         limit: options?.limit ?? 50,
         offset: options?.offset ?? 0,
+        collectionId: options?.collectionId,
       }),
     enabled: options?.enabled !== false && !!provider,
   });
@@ -49,7 +55,7 @@ export function useCatalogProduct(
 ) {
   return useQuery({
     queryKey: catalogKeys.detail(provider, id),
-    queryFn: () => apiClient.getProviderCatalogProduct({ provider: provider as "printful" | "lulu" | "manual", id }),
+    queryFn: () => apiClient.getProviderCatalogProduct({ provider: provider as ProviderName, id }),
     enabled: options?.enabled !== false && !!provider && !!id,
   });
 }
@@ -61,7 +67,7 @@ export function useCatalogVariants(
 ) {
   return useQuery({
     queryKey: catalogKeys.variants(provider, id),
-    queryFn: () => apiClient.getProviderCatalogVariants({ provider: provider as "printful" | "lulu" | "manual", id }),
+    queryFn: () => apiClient.getProviderCatalogVariants({ provider: provider as ProviderName, id }),
     enabled: options?.enabled !== false && !!provider && !!id,
   });
 }
@@ -189,7 +195,7 @@ export function useGetPlacements(
     queryKey: placementKeys.detail(provider, catalogProductId),
     queryFn: () =>
       apiClient.getProviderPlacements({
-        provider: provider as "printful" | "lulu" | "manual",
+        provider: provider as ProviderName,
         catalogProductId,
       }),
     enabled: options?.enabled !== false && !!provider && !!catalogProductId,

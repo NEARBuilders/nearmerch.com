@@ -1,4 +1,4 @@
-export type ProviderName = "printful" | "lulu" | "manual";
+export type ProviderName = "printful" | "lulu" | "manual" | "qikink";
 
 export interface ProviderInfo {
   id: ProviderName;
@@ -29,6 +29,13 @@ export const PROVIDERS: ProviderInfo[] = [
     description: "Self-fulfilled — manual order management with email notifications",
     color: "#10b981",
     hasCatalog: false,
+  },
+  {
+    id: "qikink",
+    name: "Qikink",
+    description: "Print-on-demand — India fulfillment",
+    color: "#6366f1",
+    hasCatalog: true,
   },
 ];
 

@@ -19,7 +19,7 @@
     },
     "api": {
       "name": "api",
-      "version": "1.8.0",
+      "version": "1.12.1",
       "dependencies": {
         "@orpc/contract": "^1.13.4",
         "@orpc/server": "^1.13.4",
@@ -100,7 +100,7 @@
     },
     "ui": {
       "name": "ui",
-      "version": "1.12.0",
+      "version": "1.17.0",
       "dependencies": {
         "@dnd-kit/react": "^0.3.2",
         "@hot-labs/near-connect": "catalog:",

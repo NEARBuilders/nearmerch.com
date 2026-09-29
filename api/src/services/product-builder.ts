@@ -3,6 +3,7 @@ import type { MarketplaceRuntime } from '../runtime';
 import type { FulfillmentConfig, Product, ProductImage } from '../schema';
 import { ProductStore, type ProductVariantInput, type ProductWithImages } from '../store';
 import type { FulfillmentFile } from './fulfillment/schema';
+import { resolveQikinkCatalogSelection } from './fulfillment/qikink/catalog';
 import { generateProductId, generatePublicKey, generateSlug } from '../utils/product-ids';
 
 export interface BuildVariantInput {
@@ -28,6 +29,71 @@ export interface BuildProductInput {
   metadata?: Record<string, unknown>;
 }
 
+/** Image PKs must be unique per listing for Qikink. Printful/Lulu keep the original global id. */
+export function catalogBuilderImageId(productId: string, index = 0, providerName?: string): string {
+  if (providerName && providerName !== 'qikink') {
+    return `product-image-${index}`;
+  }
+  return `${productId}-image-${index}`;
+}
+
+/**
+ * Variant PKs must be unique per listing for Qikink (SKUs are reused).
+ * Printful and Lulu keep `${provider}-variant-${variantRef}`.
+ */
+export function catalogBuilderVariantId(
+  productId: string,
+  providerName: string,
+  variantRef: string,
+): string {
+  if (providerName !== 'qikink') {
+    return `${providerName}-variant-${variantRef}`;
+  }
+  return `${productId}-${providerName}-variant-${variantRef}`;
+}
+
+/**
+ * The generic catalog builder sends Printful-shaped `{ catalogProductId, catalogVariantId }`.
+ * Qikink orders need the T2 fields (sku, searchFromMyProducts, placementSku). Enrich here so
+ * the existing new-product UI does not need a Qikink-specific branch.
+ */
+export function enrichBuildInputForProvider(input: BuildProductInput): BuildProductInput {
+  if (input.providerName !== 'qikink') {
+    return input;
+  }
+
+  return {
+    ...input,
+    variants: input.variants.map((variant) => {
+      const catalogProductId = typeof variant.providerConfig.catalogProductId === 'string'
+        ? variant.providerConfig.catalogProductId
+        : '';
+      const catalogVariantId = typeof variant.providerConfig.catalogVariantId === 'string'
+        ? variant.providerConfig.catalogVariantId
+        : variant.variantRef;
+      const resolved = resolveQikinkCatalogSelection({
+        catalogProductId,
+        catalogVariantId,
+      });
+      const providerConfig = { ...resolved.providerConfig };
+      const attributes = variant.attributes && variant.attributes.length > 0
+        ? variant.attributes
+        : [
+            ...(resolved.variant.size ? [{ name: 'Size', value: resolved.variant.size }] : []),
+            ...(resolved.variant.color ? [{ name: 'Color', value: resolved.variant.color }] : []),
+          ];
+
+      return {
+        ...variant,
+        name: variant.name === variant.variantRef ? resolved.variant.name : variant.name,
+        sku: variant.sku ?? resolved.providerConfig.sku,
+        attributes,
+        providerConfig,
+      };
+    }),
+  };
+}
+
 export class ProductBuilderService extends Context.Tag('ProductBuilderService')<
   ProductBuilderService,
   {
@@ -51,11 +117,13 @@ export const ProductBuilderServiceLive = (runtime: MarketplaceRuntime) =>
             return yield* Effect.fail(new Error('At least one variant is required'));
           }
 
-          const basePrice = input.priceOverride ?? input.variants[0]!.price ?? 0;
-          const baseCurrency = input.currency ?? input.variants[0]!.currency ?? 'USD';
+          const prepared = enrichBuildInputForProvider(input);
+
+          const basePrice = prepared.priceOverride ?? prepared.variants[0]!.price ?? 0;
+          const baseCurrency = prepared.currency ?? prepared.variants[0]!.currency ?? 'USD';
 
           const optionsMap = new Map<string, Set<string>>();
-          for (const variant of input.variants) {
+          for (const variant of prepared.variants) {
             for (const attr of variant.attributes ?? []) {
               if (!optionsMap.has(attr.name)) optionsMap.set(attr.name, new Set());
               optionsMap.get(attr.name)!.add(attr.value);
@@ -69,28 +137,32 @@ export const ProductBuilderServiceLive = (runtime: MarketplaceRuntime) =>
             position: index + 1,
           }));
 
+          const id = generateProductId();
+          const publicKey = generatePublicKey();
+          const slug = generateSlug(prepared.name, publicKey);
+
           const images: ProductImage[] = [];
-          if (input.image) {
+          if (prepared.image) {
             images.push({
-              id: `product-image-0`,
-              url: input.image,
+              id: catalogBuilderImageId(id, 0, prepared.providerName),
+              url: prepared.image,
               type: 'catalog',
               order: 0,
             });
           }
 
-          const variants: ProductVariantInput[] = input.variants.map((v) => {
+          const variants: ProductVariantInput[] = prepared.variants.map((v) => {
             const fulfillmentConfig: FulfillmentConfig = {
-              providerName: input.providerName,
+              providerName: prepared.providerName,
               providerConfig: v.providerConfig,
-              files: input.files,
+              files: prepared.files,
             };
 
             return {
-              id: `${input.providerName}-variant-${v.variantRef}`,
+              id: catalogBuilderVariantId(id, prepared.providerName, v.variantRef),
               name: v.name,
               sku: v.sku,
-              price: input.priceOverride ?? v.price ?? basePrice,
+              price: prepared.priceOverride ?? v.price ?? basePrice,
               currency: v.currency ?? baseCurrency,
               attributes: v.attributes ?? [],
               externalVariantId: v.variantRef,
@@ -99,32 +171,28 @@ export const ProductBuilderServiceLive = (runtime: MarketplaceRuntime) =>
             };
           });
 
-          const id = generateProductId();
-          const publicKey = generatePublicKey();
-          const slug = generateSlug(input.name, publicKey);
-
           const productWithImages: ProductWithImages = {
             id,
             publicKey,
             slug,
-            name: input.name,
-            description: input.description,
+            name: prepared.name,
+            description: prepared.description,
             price: basePrice,
             currency: baseCurrency,
             productTypeSlug: undefined,
             tags: [],
             options,
             images,
-            thumbnailImage: input.image,
+            thumbnailImage: prepared.image,
             variants,
-            designFiles: input.files,
-            fulfillmentProvider: input.providerName,
+            designFiles: prepared.files,
+            fulfillmentProvider: prepared.providerName,
             externalProductId: undefined,
-            source: input.providerName,
-            assetId: input.assetId,
+            source: prepared.providerName,
+            assetId: prepared.assetId,
             metadata: {
               fees: [],
-              ...input.metadata,
+              ...prepared.metadata,
             },
           };
 

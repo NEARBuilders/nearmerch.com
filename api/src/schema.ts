@@ -11,15 +11,21 @@ import {
   ManualProviderSettingsSchema,
   type ManualProviderSettings,
 } from './services/fulfillment/manual/types';
+import {
+  QikinkProviderDetailsSchema,
+  type QikinkProviderDetails,
+} from './services/fulfillment/qikink/types';
 import { FulfillmentFileSchema as FulfillmentFileSchemaBase } from './services/fulfillment/schema';
 
 export {
   PrintfulProviderDetailsSchema,
   LuluProviderDetailsSchema,
   ManualProviderSettingsSchema,
+  QikinkProviderDetailsSchema,
   type PrintfulProviderDetails,
   type LuluProviderDetails,
   type ManualProviderSettings,
+  type QikinkProviderDetails,
 };
 
 export const FulfillmentFileSchema = FulfillmentFileSchemaBase;
@@ -138,6 +144,7 @@ export const ProviderDetailsSchema = z.object({
   printful: PrintfulProviderDetailsSchema.optional(),
   lulu: LuluProviderDetailsSchema.optional(),
   manual: ManualProviderSettingsSchema.optional(),
+  qikink: QikinkProviderDetailsSchema.optional(),
 });
 
 export type ProviderDetails = z.infer<typeof ProviderDetailsSchema>;
@@ -611,7 +618,7 @@ export const ManualWebhookPayloadSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
-export const ProviderNameSchema = z.enum(['printful', 'lulu', 'manual']);
+export const ProviderNameSchema = z.enum(['printful', 'lulu', 'manual', 'qikink']);
 export const ProviderWebhookEventTypeSchema = z.union([
   PrintfulWebhookEventTypeSchema,
   LuluWebhookEventTypeSchema,

@@ -32,12 +32,16 @@ interface CartState {
   getItemIds: () => string[];
 }
 
-function buildCartItemId(variantId: string, referralAccountId?: string) {
+export function buildCartItemId(variantId: string, referralAccountId?: string) {
   const normalizedReferral = referralAccountId?.trim().toLowerCase();
 
   return normalizedReferral
     ? `${variantId}::ref:${normalizedReferral}`
     : `${variantId}::direct`;
+}
+
+export function getCartItemReactKey(item: Pick<CartItem, "id">): string {
+  return item.id;
 }
 
 export const useCartStore = create<CartState>()(

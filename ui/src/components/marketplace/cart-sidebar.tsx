@@ -5,6 +5,7 @@ import {
   COLOR_MAP,
   getAttributeHex
 } from "@/lib/product-utils";
+import { getCartItemReactKey } from "@/stores/cart-store";
 import { Link, useRouter, useCanGoBack } from "@tanstack/react-router";
 import { Minus, Plus, X } from "lucide-react";
 
@@ -79,7 +80,7 @@ export function CartSidebar({ isOpen, onClose }: CartSidebarProps) {
                   null;
 
                 return (
-                  <div key={item.id} onClick={onClose}>
+                  <div key={getCartItemReactKey(item)} onClick={onClose}>
                     <ProductCard
                       product={item.product}
                       variant="horizontal"

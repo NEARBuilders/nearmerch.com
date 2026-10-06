@@ -2,7 +2,7 @@ import { useCart } from '@/hooks/use-cart';
 import { useNearAccountId } from '@/hooks/use-near-account-id';
 import { useNearPrice } from '@/hooks/use-near-price';
 import { useFormPersistence } from '@/hooks/use-form-persistence';
-import { useCartStore } from '@/stores/cart-store';
+import { getCartItemReactKey, useCartStore } from '@/stores/cart-store';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, Check, ChevronsUpDown } from 'lucide-react';
 import pingpayLogoDark from '@/assets/pingpay/pingpay-logo-dark.png';
@@ -1072,7 +1072,7 @@ function CheckoutPage() {
                       item.product.images?.find((img) => img.type !== "mockup" && img.type !== "detail")?.url;
                     
                     return (
-                    <div key={item.productId} className="flex gap-4">
+                    <div key={getCartItemReactKey(item)} className="flex gap-4">
                       <div className="relative size-20 bg-muted border border-border/60 shrink-0 overflow-hidden rounded-lg">
                         <div className="absolute inset-0 bg-gradient-to-b from-background/10 via-background/40 to-background/90 dark:from-background/10 dark:via-background/60 dark:to-background z-0"></div>
                         {displayImage ? (

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.18.0
+
+### Minor Changes
+
+- fe67c8a: Add a DB-backed maintenance mode that shows a storefront banner and blocks purchases.
+
+### Patch Changes
+
+- 0af3491: Filter product searches before applying the result limit and include the full supported catalog in storefront search.
+- 3b637fe: Preserve cart items during temporary product API failures while still removing products confirmed as unavailable.
+- ea58d74: Fix provider quote errors not reaching frontend and sanitize debug prefixes (#96)
+
 ## 1.17.0
 
 ### Minor Changes

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.13.0
+
+### Minor Changes
+
+- fe67c8a: Add a DB-backed maintenance mode that shows a storefront banner and blocks purchases.
+
+### Patch Changes
+
+- 0af3491: Filter product searches before applying the result limit and include the full supported catalog in storefront search.
+- cf1a34e: Parse product pagination values from REST query strings.
+- b298ebd: Reject unavailable product variants during quote and checkout.
+- f473cec: Prevent late PingPay failure webhooks from downgrading orders that have already progressed beyond payment.
+- ea58d74: Fix provider quote errors not reaching frontend and sanitize debug prefixes (#96)
+
 ## 1.12.1
 
 ### Patch Changes

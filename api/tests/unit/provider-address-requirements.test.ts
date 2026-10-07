@@ -41,4 +41,32 @@ describe('provider address requirements', () => {
       }),
     ).toBeUndefined();
   });
+
+  it('does not add extra address requirements for Printful', () => {
+    expect(getProviderAddressRequirementError('printful', baseAddress)).toBeUndefined();
+  });
+
+  it('requires a phone number and pincode for Qikink orders', () => {
+    expect(
+      getProviderAddressRequirementError('qikink', baseAddress),
+    ).toBe('Phone number is required for Qikink delivery');
+
+    expect(
+      getProviderAddressRequirementError('qikink', {
+        ...baseAddress,
+        phone: '9876543210',
+        postCode: '   ',
+      }),
+    ).toBe('Pincode is required for Qikink delivery');
+  });
+
+  it('passes Qikink validation when phone and pincode are present', () => {
+    expect(
+      getProvidersAddressRequirementError(['qikink'], {
+        ...baseAddress,
+        phone: '9876543210',
+        postCode: '400001',
+      }),
+    ).toBeUndefined();
+  });
 });

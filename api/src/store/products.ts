@@ -39,6 +39,54 @@ function mergeProductMetadata(
   };
 }
 
+function formatQueryError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const cause = error.cause instanceof Error ? error.cause.message : undefined;
+  return cause ? `${error.message} (${cause})` : error.message;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  let current: unknown = error;
+  for (let i = 0; i < 5 && current; i += 1) {
+    if (typeof current === "object" && current !== null && "code" in current) {
+      const code = (current as { code?: unknown }).code;
+      if (code === "23505") {
+        return true;
+      }
+    }
+    current =
+      typeof current === "object" && current !== null && "cause" in current
+        ? (current as { cause?: unknown }).cause
+        : undefined;
+  }
+  return /duplicate key|unique constraint/i.test(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+function uniqueViolationMessage(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let i = 0; i < 5 && current; i += 1) {
+    if (current instanceof Error) {
+      parts.push(current.message);
+    }
+    current =
+      typeof current === "object" && current !== null && "cause" in current
+        ? (current as { cause?: unknown }).cause
+        : undefined;
+  }
+  return parts.join(" ");
+}
+
+function isProductIdentityViolation(error: unknown): boolean {
+  return /products_pkey|products_slug_unique|products_public_key_unique/i.test(
+    uniqueViolationMessage(error),
+  );
+}
+
 export class ProductStore extends Context.Tag("ProductStore")<
   ProductStore,
   {
@@ -557,6 +605,39 @@ export const ProductStoreLive = Layer.effect(
               }
             }
 
+            if (!existingProduct && product.id) {
+              const existing = await db
+                .select()
+                .from(schema.products)
+                .where(eq(schema.products.id, product.id))
+                .limit(1);
+              if (existing.length > 0) {
+                existingProduct = existing[0]!;
+              }
+            }
+
+            if (!existingProduct && product.slug) {
+              const existing = await db
+                .select()
+                .from(schema.products)
+                .where(eq(schema.products.slug, product.slug))
+                .limit(1);
+              if (existing.length > 0) {
+                existingProduct = existing[0]!;
+              }
+            }
+
+            if (!existingProduct && product.publicKey) {
+              const existing = await db
+                .select()
+                .from(schema.products)
+                .where(eq(schema.products.publicKey, product.publicKey))
+                .limit(1);
+              if (existing.length > 0) {
+                existingProduct = existing[0]!;
+              }
+            }
+
             const finalId = existingProduct?.id ?? product.id;
 
             let existingVariantsByExtId = new Map<string, { price: number }>();
@@ -572,9 +653,107 @@ export const ProductStoreLive = Layer.effect(
               }
             }
 
+            if (!existingProduct) {
+              try {
+                await db.transaction(async (tx) => {
+                  await tx.insert(schema.products).values({
+                    id: finalId,
+                    publicKey: product.publicKey,
+                    slug: product.slug,
+                    name: product.name,
+                    description: product.description || null,
+                    price: Math.round(product.price * 100),
+                    currency: product.currency,
+                    brand: product.brand || null,
+                    productTypeSlug: null,
+                    tags: [],
+                    options: product.options,
+                    thumbnailImage: product.thumbnailImage || null,
+                    featured: false,
+                    fulfillmentProvider: product.fulfillmentProvider,
+                    externalProductId: product.externalProductId || null,
+                    source: product.source,
+                    metadata: product.metadata,
+                    createdAt: now,
+                    updatedAt: now,
+                    listed: true,
+                    assetId: product.assetId || null,
+                  });
+
+                  if (product.images.length > 0) {
+                    await tx.insert(schema.productImages).values(
+                      product.images.map((img, index) => ({
+                        id: img.id || `${finalId}-img-${index}`,
+                        productId: finalId,
+                        url: img.url,
+                        type: img.type,
+                        placement: img.placement || null,
+                        style: img.style || null,
+                        variantIds: img.variantIds || null,
+                        order: img.order ?? index,
+                        createdAt: now,
+                      })),
+                    );
+                  }
+
+                  if (product.variants.length > 0) {
+                    await tx.insert(schema.productVariants).values(
+                      product.variants.map((variant) => ({
+                        id: variant.id,
+                        productId: finalId,
+                        name: variant.name,
+                        sku: variant.sku || null,
+                        price: Math.round(variant.price * 100),
+                        currency: variant.currency,
+                        attributes: variant.attributes || null,
+                        externalVariantId: variant.externalVariantId || null,
+                        fulfillmentConfig: variant.fulfillmentConfig || null,
+                        inStock: variant.inStock ?? true,
+                        createdAt: now,
+                      })),
+                    );
+                  }
+                });
+              } catch (error) {
+                if (!isUniqueViolation(error) || !isProductIdentityViolation(error)) {
+                  throw error;
+                }
+
+                const collided =
+                  (
+                    await db
+                      .select()
+                      .from(schema.products)
+                      .where(eq(schema.products.id, product.id))
+                      .limit(1)
+                  )[0] ??
+                  (
+                    await db
+                      .select()
+                      .from(schema.products)
+                      .where(eq(schema.products.slug, product.slug))
+                      .limit(1)
+                  )[0] ??
+                  (
+                    await db
+                      .select()
+                      .from(schema.products)
+                      .where(eq(schema.products.publicKey, product.publicKey))
+                      .limit(1)
+                  )[0];
+
+                if (!collided) {
+                  throw error;
+                }
+
+                existingProduct = collided;
+              }
+            }
+
             if (existingProduct) {
               const existingMetadata = existingProduct.metadata as ProductMetadata | null;
               const mergedMetadata = mergeProductMetadata(existingMetadata, product.metadata);
+              const updateId = existingProduct.id;
 
               await db
                 .update(schema.products)
@@ -591,20 +770,20 @@ export const ProductStoreLive = Layer.effect(
                   lastSyncedAt: now,
                   updatedAt: now,
                 })
-                .where(eq(schema.products.id, finalId));
+                .where(eq(schema.products.id, updateId));
 
               await db
                 .delete(schema.productVariants)
-                .where(eq(schema.productVariants.productId, finalId));
+                .where(eq(schema.productVariants.productId, updateId));
 
               if (product.variants.length > 0) {
                 await db.insert(schema.productVariants).values(
                   product.variants.map((variant) => {
-                    const existingVariant = existingVariantsByExtId.get(variant.externalVariantId || '');
+                    const existingVariant = existingVariantsByExtId.get(variant.externalVariantId || "");
                     const isPriceLocked = existingProduct.priceLocked ?? false;
                     return {
                       id: variant.id,
-                      productId: finalId,
+                      productId: updateId,
                       name: variant.name,
                       sku: variant.sku || null,
                       price: (isPriceLocked && existingVariant) ? existingVariant.price : Math.round(variant.price * 100),
@@ -629,10 +808,9 @@ export const ProductStoreLive = Layer.effect(
                     order: schema.productImages.order,
                   })
                   .from(schema.productImages)
-                  .where(eq(schema.productImages.productId, finalId));
+                  .where(eq(schema.productImages.productId, updateId));
 
-                const existingByUrl = new Map(existingImages.map(i => [i.url, i]));
-
+                const existingByUrl = new Map(existingImages.map((i) => [i.url, i]));
                 const newImages: typeof product.images = [];
                 for (const img of product.images) {
                   const existing = existingByUrl.get(img.url);
@@ -656,13 +834,12 @@ export const ProductStoreLive = Layer.effect(
                 }
 
                 if (newImages.length > 0) {
-                  const maxOrder = existingImages.length > 0 ? Math.max(...existingImages.map(i => i.order)) + 1 : 0;
+                  const maxOrder = existingImages.length > 0 ? Math.max(...existingImages.map((i) => i.order)) + 1 : 0;
                   let nextOrder = maxOrder;
-
                   await db.insert(schema.productImages).values(
                     newImages.map((img) => ({
-                      id: img.id || `${finalId}-img-sync-${nextOrder}`,
-                      productId: finalId,
+                      id: img.id || `${updateId}-img-sync-${nextOrder}`,
+                      productId: updateId,
                       url: img.url,
                       type: img.type,
                       placement: img.placement || null,
@@ -674,70 +851,13 @@ export const ProductStoreLive = Layer.effect(
                   );
                 }
               }
-            } else {
-              await db.insert(schema.products).values({
-                id: finalId,
-                publicKey: product.publicKey,
-                slug: product.slug,
-                name: product.name,
-                description: product.description || null,
-                price: Math.round(product.price * 100),
-                currency: product.currency,
-                brand: product.brand || null,
-                productTypeSlug: null,
-                tags: [],
-                options: product.options,
-                thumbnailImage: product.thumbnailImage || null,
-                featured: false,
-                fulfillmentProvider: product.fulfillmentProvider,
-                externalProductId: product.externalProductId || null,
-                source: product.source,
-                metadata: product.metadata,
-                createdAt: now,
-                updatedAt: now,
-                listed: true,
-                assetId: product.assetId || null,
-              });
-
-              if (product.images.length > 0) {
-                await db.insert(schema.productImages).values(
-                  product.images.map((img, index) => ({
-                    id: img.id || `${finalId}-img-${index}`,
-                    productId: finalId,
-                    url: img.url,
-                    type: img.type,
-                    placement: img.placement || null,
-                    style: img.style || null,
-                    variantIds: img.variantIds || null,
-                    order: img.order ?? index,
-                    createdAt: now,
-                  })),
-                );
-              }
-
-              if (product.variants.length > 0) {
-                await db.insert(schema.productVariants).values(
-                  product.variants.map((variant) => ({
-                    id: variant.id,
-                    productId: finalId,
-                    name: variant.name,
-                    sku: variant.sku || null,
-                    price: Math.round(variant.price * 100),
-                    currency: variant.currency,
-                    attributes: variant.attributes || null,
-                    externalVariantId: variant.externalVariantId || null,
-                    fulfillmentConfig: variant.fulfillmentConfig || null,
-                    inStock: variant.inStock ?? true,
-                    createdAt: now,
-                  })),
-                );
-              }
             }
 
+            const lookupId = existingProduct?.id ?? finalId;
             const results = await db
               .select()
               .from(schema.products)
-              .where(eq(schema.products.id, finalId))
+              .where(eq(schema.products.id, lookupId))
               .limit(1);
 
             if (results.length === 0) {
@@ -747,7 +867,7 @@ export const ProductStoreLive = Layer.effect(
             const result = await rowToProduct(results[0]!);
             return { ...result, isNew: !existingProduct } as Product & { isNew: boolean };
           },
-          catch: (error) => new Error(`Failed to upsert product: ${error}`),
+          catch: (error) => new Error(`Failed to upsert product: ${formatQueryError(error)}`),
         }),
 
       delete: (id) =>

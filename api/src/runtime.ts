@@ -6,6 +6,7 @@ import type { ProductWithImages, Product } from './schema';
 import PrintfulPlugin from './services/fulfillment/printful';
 import LuluPlugin from './services/fulfillment/lulu';
 import ManualPlugin from './services/fulfillment/manual';
+import QikinkPlugin, { resolveQikinkEnvironment } from './services/fulfillment/qikink';
 import { PaymentContract } from './services/payment';
 import PingPayPlugin from './services/payment/pingpay';
 import StripePlugin from './services/payment/stripe';
@@ -32,6 +33,11 @@ export interface FulfillmentConfig {
 	manual?: {
 		notificationEmails?: string[];
 		fromEmail?: string;
+	};
+	qikink?: {
+		clientId: string;
+		clientSecret: string;
+		environment?: string;
 	};
 }
 
@@ -106,6 +112,7 @@ export async function createMarketplaceRuntime(
 			printful: { module: PrintfulPlugin },
 			lulu: { module: LuluPlugin },
 			manual: { module: ManualPlugin },
+			qikink: { module: QikinkPlugin },
 			stripe: { module: StripePlugin },
 			pingpay: { module: PingPayPlugin },
 			'legion-holder': { module: LegionHolderPlugin },
@@ -199,6 +206,28 @@ export async function createMarketplaceRuntime(
 			console.log('[MarketplaceRuntime] Manual provider initialized (no config)');
 		} catch (error) {
 			console.error('[MarketplaceRuntime] Failed to initialize Manual provider:', error);
+		}
+	}
+
+	if (fulfillmentConfig.qikink?.clientId && fulfillmentConfig.qikink?.clientSecret) {
+		try {
+			const qikink = await runtime.usePlugin('qikink', {
+				variables: {
+					environment: resolveQikinkEnvironment(fulfillmentConfig.qikink.environment),
+				},
+				secrets: {
+					QIKINK_CLIENT_ID: fulfillmentConfig.qikink.clientId,
+					QIKINK_CLIENT_SECRET: fulfillmentConfig.qikink.clientSecret,
+				},
+			});
+			providers.push({
+				name: 'qikink',
+				client: qikink.createClient(),
+				router: qikink.router,
+			});
+			console.log('[MarketplaceRuntime] Qikink provider initialized');
+		} catch (error) {
+			console.error('[MarketplaceRuntime] Failed to initialize Qikink:', error);
 		}
 	}
 

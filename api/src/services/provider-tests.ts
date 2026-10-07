@@ -22,6 +22,7 @@ import { processLuluWebhookEffect, processPrintfulWebhookEffect } from './fulfil
 import { processPaymentSuccessEffect } from './payment/payment-success';
 import { OrderStore, ProductStore, ProviderConfigStore, ProviderTestStateStore } from '../store';
 import { processManualWebhookEffect } from './webhooks/manual';
+import { QIKINK_MY_PRODUCTS_TEST_SKU, toQikinkProviderConfig } from './fulfillment/qikink/catalog';
 
 const DEFAULT_ADDRESS: ShippingAddress = {
   firstName: 'Test',
@@ -33,6 +34,26 @@ const DEFAULT_ADDRESS: ShippingAddress = {
   country: 'US',
   email: 'test@example.com',
 };
+
+/** Qikink orders require phone + pincode; the US harness address would fail quote/checkout. */
+export const QIKINK_PROVIDER_TEST_ADDRESS: ShippingAddress = {
+  firstName: 'Test',
+  lastName: 'Customer',
+  addressLine1: '123 Main Street',
+  city: 'Mumbai',
+  state: 'Maharashtra',
+  postCode: '400001',
+  country: 'IN',
+  email: 'test@example.com',
+  phone: '9876543210',
+};
+
+export function defaultShippingAddressForProvider(provider: ProviderName): ShippingAddress {
+  if (provider === 'qikink') {
+    return QIKINK_PROVIDER_TEST_ADDRESS;
+  }
+  return DEFAULT_ADDRESS;
+}
 
 type ProviderTestProductStore = {
   findById: (id: string) => Effect.Effect<Product | null, Error>;
@@ -78,7 +99,7 @@ function testSource(provider: ProviderName) {
 function normalizeScenario(provider: ProviderName, scenario?: ProviderTestScenario | null): ProviderTestScenario {
   return {
     quantity: scenario?.quantity ?? 1,
-    shippingAddress: scenario?.shippingAddress ?? DEFAULT_ADDRESS,
+    shippingAddress: scenario?.shippingAddress ?? defaultShippingAddressForProvider(provider),
     selectedRates: scenario?.selectedRates,
     successUrl: scenario?.successUrl ?? `https://nearmerch.com/admin/providers?provider=${provider}`,
     cancelUrl: scenario?.cancelUrl ?? `https://nearmerch.com/admin/providers?provider=${provider}`,
@@ -100,7 +121,7 @@ function defaultProduct(provider: ProviderName, scenario: ProviderTestScenario):
     id: productId,
     publicKey: `${provider}-test-key`,
     slug: testSlug(provider),
-    name: productOverrides.name ?? `${provider} provider test product`,
+    name: productOverrides.name ?? (provider === 'qikink' ? QIKINK_MY_PRODUCTS_TEST_SKU.name : `${provider} provider test product`),
     description: productOverrides.description,
     price,
     currency,
@@ -114,18 +135,38 @@ function defaultProduct(provider: ProviderName, scenario: ProviderTestScenario):
       productOverrides.variants ?? [
         {
           id: variantId,
-          name: `${provider} default variant`,
+          name: provider === 'qikink'
+            ? `${QIKINK_MY_PRODUCTS_TEST_SKU.name} / ${QIKINK_MY_PRODUCTS_TEST_SKU.variation}`
+            : `${provider} default variant`,
+          sku: provider === 'qikink' ? QIKINK_MY_PRODUCTS_TEST_SKU.productSku : undefined,
           price,
           currency,
           attributes: [],
           fulfillmentConfig:
             provider === 'manual'
               ? undefined
-              : {
-                  providerName: provider,
-                  providerConfig: {},
-                  files: productOverrides.designFiles ?? [],
-                },
+              : provider === 'qikink'
+                ? {
+                    providerName: 'qikink',
+                    providerConfig: {
+                      ...toQikinkProviderConfig({
+                        sku: QIKINK_MY_PRODUCTS_TEST_SKU.productSku,
+                        placementSku: 'Front',
+                        catalogProductId: 'qikink-unisex-oversized-raglan',
+                        catalogVariantId: `qikink-${QIKINK_MY_PRODUCTS_TEST_SKU.productSku}`,
+                        searchFromMyProducts: 1,
+                        basePriceInr: QIKINK_MY_PRODUCTS_TEST_SKU.basePriceInr,
+                      }),
+                      storeSku: QIKINK_MY_PRODUCTS_TEST_SKU.storeSku,
+                      designSku: QIKINK_MY_PRODUCTS_TEST_SKU.designSku,
+                    },
+                    files: productOverrides.designFiles ?? [],
+                  }
+                : {
+                    providerName: provider,
+                    providerConfig: {},
+                    files: productOverrides.designFiles ?? [],
+                  },
           inStock: true,
         },
       ],
@@ -210,9 +251,22 @@ export async function resolveTestProduct(options: {
     return created;
   };
 
-  const syncExistingProduct = async (id: string) => {
+  const syncExistingProduct = async (existing: Product) => {
+    // Qikink checkout needs T2/T4 providerConfig + design files. updateProduct only
+    // syncs prices/images, so re-upsert the full harness product for this provider.
+    if (provider === 'qikink') {
+      const upserted = (await Effect.runPromise(productStore.upsert({
+        ...baseProduct,
+        id: existing.id,
+        slug: existing.slug,
+      }))) as Product & { isNew: boolean };
+      await Effect.runPromise(productStore.updateListing(existing.id, false));
+      await Effect.runPromise(stateStore.upsertState({ provider, testProductId: existing.id, scenario }));
+      return upserted;
+    }
+
     const updated = await Effect.runPromise(
-      productStore.updateProduct(id, {
+      productStore.updateProduct(existing.id, {
         name: baseProduct.name,
         description: baseProduct.description,
         price: baseProduct.price,
@@ -224,7 +278,7 @@ export async function resolveTestProduct(options: {
     );
 
     if (!updated) {
-      throw new Error(`Failed to update test product ${id}`);
+      throw new Error(`Failed to update test product ${existing.id}`);
     }
 
     await Effect.runPromise(productStore.updateListing(updated.id, false));
@@ -236,20 +290,20 @@ export async function resolveTestProduct(options: {
     const existing = await Effect.runPromise(productStore.findById(existingId)) as Product | null;
     if (existing) {
       assertOwnedTestProduct(existing, provider);
-      return await syncExistingProduct(existing.id);
+      return await syncExistingProduct(existing);
     }
   }
 
   const bySource = await Effect.runPromise(productStore.findBySource(testSource(provider))) as Product | null;
   if (bySource) {
     assertOwnedTestProduct(bySource, provider);
-    return await syncExistingProduct(bySource.id);
+    return await syncExistingProduct(bySource);
   }
 
   const slugCollision = await Effect.runPromise(productStore.findBySlug(testSlug(provider))) as Product | null;
   if (slugCollision) {
     assertOwnedTestProduct(slugCollision, provider);
-    return await syncExistingProduct(slugCollision.id);
+    return await syncExistingProduct(slugCollision);
   }
 
   return await persistNewProduct(baseProduct);
@@ -390,7 +444,7 @@ export function runProviderTestStepEffect(options: {
 
         case 'quote': {
           const items = getQuoteItems(product, scenario);
-          const address = scenario.shippingAddress ?? DEFAULT_ADDRESS;
+          const address = scenario.shippingAddress ?? defaultShippingAddressForProvider(provider);
           const quote = yield* checkoutService.getQuote(items, address);
           const selectedRates = deriveSelectedRates(quote.providerBreakdown, scenario.selectedRates);
           const result = {
@@ -426,7 +480,7 @@ export function runProviderTestStepEffect(options: {
           }
 
           const items = getQuoteItems(product, scenario);
-          const address = scenario.shippingAddress ?? DEFAULT_ADDRESS;
+          const address = scenario.shippingAddress ?? defaultShippingAddressForProvider(provider);
           const quote = yield* checkoutService.getQuote(items, address);
           const selectedRates = deriveSelectedRates(quote.providerBreakdown, persistedSelectedRates);
 

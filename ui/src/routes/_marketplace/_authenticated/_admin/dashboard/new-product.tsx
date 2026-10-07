@@ -66,6 +66,7 @@ interface FormState {
   notificationEmails: string[];
   ownerAccountIds: string[];
   catalogProductId: string;
+  catalogCollectionId: string;
   catalogSearch: string;
   selectedVariantIds: Set<string>;
   designFiles: Array<{ assetId: string; url: string; slot?: string }>;
@@ -84,6 +85,7 @@ const INITIAL_FORM_STATE: FormState = {
   notificationEmails: [],
   ownerAccountIds: [],
   catalogProductId: "",
+  catalogCollectionId: "",
   catalogSearch: "",
   selectedVariantIds: new Set(),
   designFiles: [],
@@ -922,7 +924,16 @@ function CatalogBuilder({
         <CatalogSection
           providerName={form.providerName}
           catalogProductId={form.catalogProductId}
+          catalogCollectionId={form.catalogCollectionId}
           catalogSearch={form.catalogSearch}
+          onSelectCollection={(id) => setForm((prev) => ({
+            ...prev,
+            catalogCollectionId: id,
+            catalogProductId: "",
+            selectedVariantIds: new Set(),
+            designFiles: [],
+            catalogSearch: "",
+          }))}
           onSelectProduct={(id) => setForm((prev) => ({
             ...prev,
             catalogProductId: id,
@@ -992,21 +1003,28 @@ function CatalogBuilder({
 function CatalogSection({
   providerName,
   catalogProductId,
+  catalogCollectionId,
   catalogSearch,
+  onSelectCollection,
   onSelectProduct,
   onSearchChange,
 }: {
   providerName: string;
   catalogProductId: string;
+  catalogCollectionId: string;
   catalogSearch: string;
+  onSelectCollection: (id: string) => void;
   onSelectProduct: (id: string) => void;
   onSearchChange: (q: string) => void;
 }) {
   const { data: catalogData, isLoading } = useBrowseCatalog(providerName, {
     limit: 50,
+    collectionId: catalogSearch ? undefined : catalogCollectionId || undefined,
     enabled: !!providerName,
   });
   const products = catalogData?.products ?? [];
+  const collections = catalogData?.collections ?? [];
+  const selectedCollection = collections.find((collection) => collection.id === catalogCollectionId);
   const filtered = catalogSearch
     ? products.filter(
         (p) =>
@@ -1015,14 +1033,23 @@ function CatalogSection({
       )
     : products;
 
-  const selectedProduct = products.find((p) => p.id === catalogProductId);
+  const { data: selectedProductData } = useCatalogProduct(providerName, catalogProductId, {
+    enabled: !!catalogProductId,
+  });
+  const selectedProduct =
+    products.find((p) => p.id === catalogProductId) ?? selectedProductData?.product;
   const provider = providerName ? PROVIDER_MAP.get(providerName as ProviderName) : null;
+  const showCollections = collections.length > 0 && !catalogCollectionId && !catalogSearch && !selectedProduct;
 
   return (
     <div className="rounded-xl border border-border/60 p-5 space-y-4">
-      <h3 className="text-sm font-semibold">Catalog Product</h3>
+      <h3 className="text-sm font-semibold">
+        {showCollections ? "Catalog Collection" : "Catalog Product"}
+      </h3>
       <p className="text-xs text-foreground/50">
-        Select the base product (blank) from the {provider?.name ?? providerName} catalog.
+        {showCollections
+          ? `Choose a ${provider?.name ?? providerName} collection, then pick a blank product and upload your design.`
+          : `Select the base product (blank) from the ${provider?.name ?? providerName} catalog.`}
       </p>
 
       {selectedProduct && (
@@ -1050,8 +1077,65 @@ function CatalogSection({
         </div>
       )}
 
-      {!selectedProduct && (
+      {!selectedProduct && showCollections && (
         <>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-foreground/50" />
+            <Input
+              placeholder="Search all catalog products..."
+              value={catalogSearch}
+              onChange={(e) => onSearchChange(e.target.value)}
+              className="pl-10 bg-background/60 border border-border/60 rounded-lg focus-visible:ring-0 focus-visible:border-[#00EC97]"
+            />
+          </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="size-6 animate-spin text-[#00EC97]" />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 max-h-[360px] overflow-y-auto pr-1">
+              {collections.map((collection) => (
+                <button
+                  key={collection.id}
+                  type="button"
+                  onClick={() => onSelectCollection(collection.id)}
+                  className="flex items-center gap-3 rounded-lg border border-border/60 p-3 text-left transition-colors hover:border-[#00EC97]/40"
+                >
+                  {collection.image ? (
+                    <img src={collection.image} alt={collection.name} className="size-10 rounded object-cover bg-muted" />
+                  ) : (
+                    <div className="size-10 rounded bg-muted flex items-center justify-center">
+                      <Package className="size-4 text-foreground/50" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{collection.name}</p>
+                    <p className="text-xs text-foreground/60 truncate">
+                      {collection.productCount} {collection.productCount === 1 ? "product" : "products"}
+                    </p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {!selectedProduct && !showCollections && (
+        <>
+          {selectedCollection && (
+            <div className="flex items-center gap-2 text-xs text-foreground/60">
+              <button
+                type="button"
+                onClick={() => onSelectCollection("")}
+                className="hover:text-foreground underline"
+              >
+                Collections
+              </button>
+              <span>/</span>
+              <span className="text-foreground">{selectedCollection.name}</span>
+            </div>
+          )}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-foreground/50" />
             <Input
@@ -1186,7 +1270,11 @@ function VariantsSection({
                   </div>
                 </div>
                 {v.price?.cost != null && (
-                  <span className="text-sm text-foreground/70">${v.price.cost.toFixed(2)}</span>
+                  <span className="text-sm text-foreground/70">
+                    {v.price.currency && v.price.currency !== 'USD'
+                      ? `${v.price.cost} ${v.price.currency}`
+                      : `$${v.price.cost.toFixed(2)}`}
+                  </span>
                 )}
                 <div
                   className={cn(

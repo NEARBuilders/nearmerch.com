@@ -39,6 +39,7 @@ import {
   useSaveProviderTestScenario,
 } from "@/integrations/api/provider-tests";
 import { providerTestKeys } from "@/integrations/api/provider-tests";
+import type { ProviderName } from "@/lib/providers";
 
 function ProvidersError({ error }: { error: Error }) {
   const router = useRouter();
@@ -73,7 +74,7 @@ function ProviderTestPanel({
   description,
   defaultScenario,
 }: {
-  provider: "printful" | "lulu" | "manual";
+  provider: ProviderName;
   title: string;
   description: string;
   defaultScenario: Record<string, unknown>;
@@ -252,10 +253,11 @@ export const Route = createFileRoute(
 )({
   loader: async ({ context }) => {
     const queryClient = context.queryClient;
-    const [printful, lulu, manual] = await Promise.all([
+    const [printful, lulu, manual, qikink] = await Promise.all([
       apiClient.getProviderConfig({ provider: "printful" }),
       apiClient.getProviderConfig({ provider: "lulu" }),
       apiClient.getProviderConfig({ provider: "manual" }),
+      apiClient.getProviderConfig({ provider: "qikink" }),
       queryClient.prefetchQuery({
         queryKey: providerTestKeys.state("printful"),
         queryFn: () => apiClient.getProviderTestState({ provider: "printful" }),
@@ -268,12 +270,17 @@ export const Route = createFileRoute(
         queryKey: providerTestKeys.state("manual"),
         queryFn: () => apiClient.getProviderTestState({ provider: "manual" }),
       }),
+      queryClient.prefetchQuery({
+        queryKey: providerTestKeys.state("qikink"),
+        queryFn: () => apiClient.getProviderTestState({ provider: "qikink" }),
+      }),
     ]);
 
     return {
       printfulConfig: printful.config,
       luluConfig: lulu.config,
       manualConfig: manual.config,
+      qikinkConfig: qikink.config,
     };
   },
   errorComponent: ProvidersError,
@@ -1091,6 +1098,32 @@ function ProvidersPage() {
                   inStock: true,
                 },
               ],
+            },
+          }}
+        />
+
+        <ProviderTestPanel
+          provider="qikink"
+          title="Qikink"
+          description="India fulfillment provider. Provider tests use your Qikink My Products SKU (Unisex Oversized Raglan / UOsRgHs-BkCm-XS)."
+          defaultScenario={{
+            quantity: 1,
+            shippingAddress: {
+              firstName: "Test",
+              lastName: "Customer",
+              addressLine1: "123 Main Street",
+              city: "Mumbai",
+              state: "Maharashtra",
+              postCode: "400001",
+              country: "IN",
+              email: "test@example.com",
+              phone: "9876543210",
+            },
+            product: {
+              name: "Unisex Oversized Raglan",
+              price: 25,
+              currency: "USD",
+              fulfillmentProvider: "qikink",
             },
           }}
         />

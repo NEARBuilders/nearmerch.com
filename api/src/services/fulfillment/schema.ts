@@ -61,14 +61,24 @@ export const ProviderCatalogProductSchema = z.object({
   variants: z.array(ProviderCatalogVariantSchema).optional(),
 });
 
+export const CatalogCollectionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullable().optional(),
+  image: z.string().nullable().optional(),
+  productCount: z.number().int().min(0),
+});
+
 export const BrowseCatalogInputSchema = z.object({
   limit: z.number().int().positive().max(100).default(50),
   offset: z.number().int().min(0).default(0),
+  collectionId: z.string().min(1).optional(),
 });
 
 export const BrowseCatalogOutputSchema = z.object({
   products: z.array(ProviderCatalogProductSchema),
   total: z.number(),
+  collections: z.array(CatalogCollectionSchema).optional(),
 });
 
 export const CatalogProductDetailOutputSchema = z.object({
@@ -287,6 +297,7 @@ export type CatalogSlot = z.infer<typeof CatalogSlotSchema>;
 export type ProviderCatalogProduct = z.infer<typeof ProviderCatalogProductSchema>;
 export type ProviderCatalogVariant = z.infer<typeof ProviderCatalogVariantSchema>;
 export type ProviderCatalogPrice = z.infer<typeof ProviderCatalogPriceSchema>;
+export type CatalogCollection = z.infer<typeof CatalogCollectionSchema>;
 export type BrowseCatalogInput = z.infer<typeof BrowseCatalogInputSchema>;
 export type BrowseCatalogOutput = z.infer<typeof BrowseCatalogOutputSchema>;
 export type CatalogProductDetailOutput = z.infer<typeof CatalogProductDetailOutputSchema>;

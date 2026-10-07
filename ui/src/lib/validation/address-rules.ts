@@ -98,6 +98,19 @@ export const PROVIDER_CONFIG: Record<string, ProviderConfig> = {
 
   manual: {},
 
+  qikink: {
+    addressRules: {
+      phone: {
+        required: true,
+        errorMessage: 'Phone number is required for Qikink delivery.',
+      },
+      postcode: {
+        required: true,
+        errorMessage: 'Pincode is required for Qikink delivery.',
+      },
+    },
+  },
+
   gelato: {},
 };
 

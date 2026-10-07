@@ -8,6 +8,15 @@ export function getProviderAddressRequirementError(
     return "Phone number is required for delivery";
   }
 
+  if (providerName === "qikink") {
+    if (!address.phone?.trim()) {
+      return "Phone number is required for Qikink delivery";
+    }
+    if (!address.postCode?.trim()) {
+      return "Pincode is required for Qikink delivery";
+    }
+  }
+
   // manual and printful do not require phone
 
   return undefined;

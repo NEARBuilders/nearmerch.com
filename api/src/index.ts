@@ -56,6 +56,7 @@ export default createPlugin({
     hostUrl: z.string().url().optional(),
     returnAddress: ReturnAddressSchema.optional(),
     luluEnvironment: z.enum(['sandbox', 'production']).default('production'),
+    qikinkEnvironment: z.enum(['sandbox', 'production']).default('sandbox'),
     storageProvider: z.enum(["r2", "s3"]).optional(),
     storageBucket: z.string().optional(),
     storageEndpoint: z.string().optional(),
@@ -71,6 +72,9 @@ export default createPlugin({
     PRINTFUL_WEBHOOK_SECRET: z.string().optional(),
     LULU_CLIENT_KEY: z.string().optional(),
     LULU_CLIENT_SECRET: z.string().optional(),
+    QIKINK_CLIENT_ID: z.string().optional(),
+    QIKINK_CLIENT_SECRET: z.string().optional(),
+    QIKINK_ENVIRONMENT: z.enum(['sandbox', 'production', 'live']).optional(),
     PING_API_KEY: z.string().optional(),
     PING_WEBHOOK_SECRET: z.string().optional(),
     MANUAL_WEBHOOK_SECRET: z.string().optional(),
@@ -136,6 +140,17 @@ export default createPlugin({
               notificationEmails: [],
               fromEmail: config.secrets.MANUAL_FULFILLMENT_FROM_EMAIL,
             },
+            qikink:
+              config.secrets.QIKINK_CLIENT_ID &&
+              config.secrets.QIKINK_CLIENT_SECRET
+                ? {
+                    clientId: config.secrets.QIKINK_CLIENT_ID,
+                    clientSecret: config.secrets.QIKINK_CLIENT_SECRET,
+                    environment:
+                      config.secrets.QIKINK_ENVIRONMENT ??
+                      config.variables.qikinkEnvironment,
+                  }
+                : undefined,
           },
           {
             stripe:
@@ -2224,11 +2239,13 @@ export default createPlugin({
           const { PRINTFUL_PROVIDER_FIELDS } = await import('./services/fulfillment/printful');
           const { LULU_PROVIDER_FIELDS } = await import('./services/fulfillment/lulu');
           const { MANUAL_PROVIDER_FIELDS } = await import('./services/fulfillment/manual');
+          const { QIKINK_PROVIDER_FIELDS } = await import('./services/fulfillment/qikink');
 
           const allConfigs = {
             printful: PRINTFUL_PROVIDER_FIELDS,
             lulu: LULU_PROVIDER_FIELDS,
             manual: MANUAL_PROVIDER_FIELDS,
+            qikink: QIKINK_PROVIDER_FIELDS,
           };
 
           if (input.provider) {
@@ -2648,6 +2665,7 @@ export default createPlugin({
           return await provider.client.browseCatalog({
             limit: input.limit,
             offset: input.offset,
+            collectionId: input.collectionId,
           });
         }),
 

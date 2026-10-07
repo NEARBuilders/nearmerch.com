@@ -314,3 +314,6 @@ test-results/
 
 # Database backups
 backups/
+
+# Local fulfillment notes (not for the PR)
+fulfillment.md

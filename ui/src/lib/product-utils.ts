@@ -100,7 +100,7 @@ export function getAvailableSizesForColor({
       const variantColor = getOptionValue(variant.attributes, "Color");
       const colorMatches = !hasColorOptions || variantColor === selectedColor;
 
-      return variantSize === size && colorMatches && variant.availableForSale;
+      return variantSize === size && colorMatches && variant.availableForSale !== false;
     });
   });
 }
@@ -113,7 +113,97 @@ export function resolveSelectedSizeForColor(
     return selectedSize;
   }
 
+  return "";
+}
+
+export function hasSelectableSizes(sizes: string[]): boolean {
+  return (
+    sizes.length > 0 &&
+    sizes[0] !== "N/A" &&
+    !(sizes.length === 1 && sizes[0] === "One size")
+  );
+}
+
+export function getInitialSizeForColor(availableSizesForColor: string[]): string {
+  if (!hasSelectableSizes(availableSizesForColor)) return "";
+  if (availableSizesForColor.includes("M")) return "M";
   return availableSizesForColor[0] || "";
+}
+
+export function sizeAfterColorChange(
+  selectedSize: string,
+  availableSizesForColor: string[],
+): string {
+  return availableSizesForColor.includes(selectedSize) ? selectedSize : "";
+}
+
+export function sizeOptionSelection(
+  size: string,
+  availableSizesForColor: string[],
+  selectedColor?: string,
+): { size: string } | { error: string } {
+  if (availableSizesForColor.includes(size)) {
+    return { size };
+  }
+  return { error: getUnavailableCombinationMessage(size, selectedColor) };
+}
+
+export function getUnavailableCombinationMessage(size: string, color?: string): string {
+  if (color) {
+    return `${size} isn’t available in ${color}. Please pick another size.`;
+  }
+  return `${size} isn’t available. Please pick another size.`;
+}
+
+export function getUnavailableVariantMessage({
+  selectedSize,
+  selectedColor,
+  effectiveSelectedSize,
+  availableSizesForColor,
+  hasSizeOptions,
+}: {
+  selectedSize: string;
+  selectedColor: string;
+  effectiveSelectedSize: string;
+  availableSizesForColor: string[];
+  hasSizeOptions: boolean;
+}): string {
+  if (selectedSize && !availableSizesForColor.includes(selectedSize) && selectedColor) {
+    return getUnavailableCombinationMessage(selectedSize, selectedColor);
+  }
+  if (hasSizeOptions && !effectiveSelectedSize) {
+    return "Please select an available size";
+  }
+  return "That color and size combination isn’t available";
+}
+
+export function findVariantForSelection<T extends VariantWithOptions>(
+  variants: T[],
+  {
+    selectedColor,
+    selectedSize,
+    hasColorOptions,
+    hasSizeOptions,
+  }: {
+    selectedColor: string;
+    selectedSize: string;
+    hasColorOptions: boolean;
+    hasSizeOptions: boolean;
+  },
+): T | undefined {
+  const isPurchasable = (variant: T) => variant.availableForSale !== false;
+
+  if (!hasColorOptions && !hasSizeOptions) {
+    return variants.find(isPurchasable);
+  }
+
+  return variants.find((variant) => {
+    const variantColor = getOptionValue(variant.attributes, "Color");
+    const variantSize = getOptionValue(variant.attributes, "Size");
+    const colorMatch = !hasColorOptions || variantColor === selectedColor;
+    const sizeMatch = !hasSizeOptions || variantSize === selectedSize;
+    return colorMatch && sizeMatch && isPurchasable(variant);
+  });
 }
 
 function isProductDisplayImage(image: ProductImageWithVariants): boolean {

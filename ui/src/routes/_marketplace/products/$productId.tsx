@@ -11,7 +11,6 @@ import { useCartSidebarStore } from "@/stores/cart-sidebar-store";
 import {
   getReferralConfig,
   getPurchaseGatePluginId,
-  requiresSize,
   useProducts,
   usePurchaseGateAccess,
   type ProductImage,
@@ -19,12 +18,18 @@ import {
 } from "@/integrations/api";
 import {
   COLOR_MAP,
+  findVariantForSelection,
   getAvailableSizesForColor,
   getAttributeHex,
+  getInitialSizeForColor,
   getOptionValue,
+  getUnavailableVariantMessage,
   getVariantImage,
   getVariantImageUrl,
+  hasSelectableSizes,
   resolveSelectedSizeForColor,
+  sizeAfterColorChange,
+  sizeOptionSelection,
 } from "@/lib/product-utils";
 import {
   absoluteUrl,
@@ -288,7 +293,13 @@ function ProductDetailPage() {
   const orderedColors = colorOption?.values || [];
 
   const defaultColor = orderedColors[0] || "";
-  const defaultSize = orderedSizes.includes("M") ? "M" : orderedSizes[0] || "";
+  const sizesForDefaultColor = getAvailableSizesForColor({
+    sizes: orderedSizes,
+    variants: availableVariants,
+    selectedColor: defaultColor,
+    hasColorOptions: orderedColors.length > 0,
+  });
+  const defaultSize = getInitialSizeForColor(sizesForDefaultColor);
 
   const [selectedColor, setSelectedColor] = useState<string>(defaultColor);
   const [selectedSize, setSelectedSize] = useState<string>(defaultSize);
@@ -304,13 +315,13 @@ function ProductDetailPage() {
     availableSizesForColor
   );
 
-  const selectedVariant = availableVariants.find((v) => {
-    const vSize = getOptionValue(v.attributes, "Size");
-    const vColor = getOptionValue(v.attributes, "Color");
-    const colorMatch = orderedColors.length === 0 || vColor === selectedColor;
-    const sizeMatch = orderedSizes.length === 0 || vSize === effectiveSelectedSize;
-    return colorMatch && sizeMatch;
-  }) || availableVariants[0];
+  const hasSizeOptions = hasSelectableSizes(orderedSizes);
+  const selectedVariant = findVariantForSelection(availableVariants, {
+    selectedColor,
+    selectedSize: effectiveSelectedSize,
+    hasColorOptions: orderedColors.length > 0,
+    hasSizeOptions,
+  });
 
   const displayPrice = selectedVariant?.price || product.price;
   const selectedVariantId = selectedVariant?.id;
@@ -413,12 +424,8 @@ function ProductDetailPage() {
   }, [defaultColor, defaultSize, product.id]);
 
   useEffect(() => {
-    if (
-      availableSizesForColor.length > 0 &&
-      !availableSizesForColor.includes(selectedSize)
-    ) {
-      setSelectedSize(availableSizesForColor[0] || "");
-    }
+    const nextSize = sizeAfterColorChange(selectedSize, availableSizesForColor);
+    if (nextSize !== selectedSize) setSelectedSize(nextSize);
   }, [selectedSize, availableSizesForColor]);
 
   // When color/variant changes via color picker (not thumbnail click), update main image
@@ -463,18 +470,29 @@ function ProductDetailPage() {
   // Favorites should track the MAIN product
   const isFavorite = favoriteIds.includes(product.id);
 
-  const needsSize =
-    requiresSize(product.collections) && hasVariants && orderedSizes.length > 0;
-
   const handleAddToCart = () => {
-    if (!selectedVariant || !canPurchase) return;
+    if (!canPurchase) return;
+    if (!selectedVariant) {
+      toast.error(
+        getUnavailableVariantMessage({
+          selectedSize,
+          selectedColor,
+          effectiveSelectedSize,
+          availableSizesForColor,
+          hasSizeOptions,
+        }),
+      );
+      return;
+    }
     const variantImageUrl = selectedVariantId ? getVariantImageUrl(product, selectedVariantId) : undefined;
+    const cartSize = getOptionValue(selectedVariant.attributes, "Size") || effectiveSelectedSize;
+    const cartColor = getOptionValue(selectedVariant.attributes, "Color") || selectedColor;
     for (let i = 0; i < quantity; i++) {
       addToCart(
         product.slug,
         selectedVariantId || '',
-        effectiveSelectedSize,
-        selectedColor,
+        cartSize,
+        cartColor,
         variantImageUrl,
         activeReferralAccountId,
       );
@@ -850,7 +868,7 @@ function ProductDetailPage() {
             )}
 
               {/* Size Selection */}
-            {hasVariants && orderedSizes.length > 0 && !(orderedSizes.length === 1 && orderedSizes[0] === "One size") && (
+            {hasVariants && hasSizeOptions && (
               <div className="space-y-3 min-h-[80px]">
                   <label className="block text-sm font-semibold tracking-[-0.48px] text-foreground/90 dark:text-muted-foreground uppercase">
                     Size
@@ -858,19 +876,29 @@ function ProductDetailPage() {
                 <div className="flex flex-wrap gap-2">
                   {orderedSizes.map((size) => {
                     const isAvailable = availableSizesForColor.includes(size);
+                    const isSelected = isAvailable && size === effectiveSelectedSize;
 
                     return (
                       <button
                         key={size}
-                        onClick={() => setSelectedSize(size)}
-                        disabled={!isAvailable}
+                        onClick={() => {
+                          const selection = sizeOptionSelection(
+                            size,
+                            availableSizesForColor,
+                            selectedColor || undefined,
+                          );
+                          if ("error" in selection) {
+                            toast.error(selection.error);
+                            return;
+                          }
+                          setSelectedSize(selection.size);
+                        }}
                         className={cn(
                             "px-5 py-2.5 tracking-[-0.48px] transition-all rounded-lg font-medium text-sm border-2",
-                          size === effectiveSelectedSize
+                          isSelected
                               ? "bg-[#00EC97] text-black border-[#00EC97]"
                               : "bg-background/40 border-border/60 hover:border-[#00EC97] hover:text-[#00EC97] hover:bg-background/60",
-                          !isAvailable &&
-                            "opacity-50 cursor-not-allowed line-through"
+                          !isAvailable && "opacity-50 line-through"
                         )}
                       >
                         {size}
@@ -942,7 +970,7 @@ function ProductDetailPage() {
               <Button
                 onClick={handleAddToCart}
                 className="w-full rounded-lg h-14 bg-[#00EC97] text-base font-bold text-black transition-colors hover:bg-[#00d97f]"
-                disabled={(needsSize && !selectedVariant) || isAccessLoading}
+                disabled={!selectedVariant || isAccessLoading}
               >
                 {isAccessLoading ? "Checking access..." : `Add to Cart - $${(displayPrice * quantity).toFixed(2)}`}
               </Button>

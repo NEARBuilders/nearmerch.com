@@ -8,6 +8,7 @@ import {
 } from 'printful-sdk-js-v2';
 import { Effect, Schedule } from 'every-plugin/effect';
 import { FulfillmentError } from '../errors';
+import { pickPrimaryPlacement } from './placements';
 
 export type { Address, CatalogItem, Order, Shipment, Variant } from 'printful-sdk-js-v2';
 
@@ -268,7 +269,10 @@ export class PrintfulClient {
       const techniques = new Set<string>();
       const orderedPlacements: string[] = [];
       const placementTechniques: Record<string, string> = {};
-      let primaryPlacement: { name: string; technique: string } | undefined;
+      const catalogTechniques = Array.isArray(product.techniques) ? product.techniques : [];
+      for (const technique of catalogTechniques) {
+        if (technique?.key) techniques.add(technique.key);
+      }
 
       if (Array.isArray(product.placements)) {
         for (const p of product.placements) {
@@ -277,12 +281,14 @@ export class PrintfulClient {
             if (p.technique) {
               placementTechniques[p.placement] = p.technique;
             }
-            if (!primaryPlacement && p.placement !== 'mockup' && p.technique) {
-              primaryPlacement = { name: p.placement, technique: p.technique };
-            }
           }
         }
       }
+
+      const primaryPlacement = pickPrimaryPlacement(
+        Array.isArray(product.placements) ? product.placements : [],
+        catalogTechniques,
+      );
 
       if (product.variants && Array.isArray(product.variants)) {
         for (const variant of product.variants) {

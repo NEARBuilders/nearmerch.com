@@ -40,9 +40,20 @@ function selectCheckoutVariant(
   product: Product,
   variantId?: string,
 ): Effect.Effect<ProductVariant | undefined, CheckoutError> {
-  const selectedVariant = variantId
-    ? product.variants.find((variant) => variant.id === variantId)
-    : product.variants.find((variant) => variant.availableForSale);
+  if (!variantId) {
+    if (product.variants.length > 0) {
+      return Effect.fail(
+        new CheckoutError({
+          code: "VARIANT_UNAVAILABLE",
+          productId: product.id,
+          cause: new Error(`A variant must be selected for ${product.title}`),
+        }),
+      );
+    }
+    return Effect.succeed(undefined);
+  }
+
+  const selectedVariant = product.variants.find((variant) => variant.id === variantId);
 
   if (selectedVariant && !selectedVariant.availableForSale) {
     return Effect.fail(
@@ -50,16 +61,6 @@ function selectCheckoutVariant(
         code: "VARIANT_UNAVAILABLE",
         productId: product.id,
         cause: new Error(`Variant is unavailable: ${selectedVariant.id}`),
-      }),
-    );
-  }
-
-  if (!variantId && product.variants.length > 0 && !selectedVariant) {
-    return Effect.fail(
-      new CheckoutError({
-        code: "VARIANT_UNAVAILABLE",
-        productId: product.id,
-        cause: new Error(`No variants are available for ${product.title}`),
       }),
     );
   }

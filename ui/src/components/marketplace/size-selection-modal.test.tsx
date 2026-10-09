@@ -1,7 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import { SizeSelectionModal } from "./size-selection-modal";
 import type { Product } from "@/integrations/api";
+
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
+}));
 
 vi.mock("@/components/marketplace/product-card", () => ({
   ProductCard: ({ product }: { product: Product }) => (
@@ -73,7 +78,12 @@ const product: Product = {
 };
 
 describe("SizeSelectionModal", () => {
-  it("adds the first valid size after changing to a color without the selected size", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("does not add a fallback size after changing to a color without the selected size", () => {
     const onAddToCart = vi.fn();
 
     render(
@@ -86,6 +96,29 @@ describe("SizeSelectionModal", () => {
     );
 
     fireEvent.click(screen.getByTitle("Blue Jean"));
+    fireEvent.click(screen.getByRole("button", { name: "M" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to Cart" }));
+
+    expect(onAddToCart).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "M isn’t available in Blue Jean. Please pick another size.",
+    );
+  });
+
+  it("adds the size the shopper selected for that color", () => {
+    const onAddToCart = vi.fn();
+
+    render(
+      <SizeSelectionModal
+        product={product}
+        isOpen
+        onClose={vi.fn()}
+        onAddToCart={onAddToCart}
+      />
+    );
+
+    fireEvent.click(screen.getByTitle("Blue Jean"));
+    fireEvent.click(screen.getByRole("button", { name: "S" }));
     fireEvent.click(screen.getByRole("button", { name: "Add to Cart" }));
 
     expect(onAddToCart).toHaveBeenCalledWith(

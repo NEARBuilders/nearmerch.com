@@ -90,9 +90,10 @@ describe('checkout variant availability', () => {
     expect(await getTestDb().select().from(schema.orders)).toHaveLength(0);
   });
 
-  it('uses an available default when the first variant is unavailable', async () => {
+  it('rejects quote and checkout when no variant is selected', async () => {
     const client = await getPluginClient({ nearAccountId: TEST_USER });
     await createTestProduct('default-available', {
+      name: 'Default Available',
       price: 5000,
       fulfillmentProvider: 'manual',
     });
@@ -105,18 +106,20 @@ describe('checkout variant availability', () => {
       inStock: true,
     });
 
-    const quote = await client.quote({
-      items: [{ productId: 'default-available', quantity: 1 }],
-      shippingAddress,
-    });
-    expect(quote.subtotal).toBe(23);
+    const expectedError = {
+      code: 'BAD_REQUEST',
+      message: 'A variant must be selected for Default Available',
+    };
 
-    const checkout = await client.createCheckout(
-      checkoutInput('default-available'),
-    );
-    const order = await client.getOrder({ id: checkout.orderId });
-
-    expect(order.order.items[0]?.variantId).toBe('default-in-stock');
+    await expect(
+      client.quote({
+        items: [{ productId: 'default-available', quantity: 1 }],
+        shippingAddress,
+      }),
+    ).rejects.toMatchObject(expectedError);
+    await expect(
+      client.createCheckout(checkoutInput('default-available')),
+    ).rejects.toMatchObject(expectedError);
   });
 
   it('rejects quote and checkout when every variant is unavailable', async () => {
@@ -134,7 +137,7 @@ describe('checkout variant availability', () => {
 
     const expectedError = {
       code: 'BAD_REQUEST',
-      message: 'No variants are available for All Unavailable',
+      message: 'A variant must be selected for All Unavailable',
     };
 
     await expect(

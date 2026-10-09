@@ -1,17 +1,24 @@
 import { ProductCard } from "@/components/marketplace/product-card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { type Product, requiresSize } from "@/integrations/api";
+import { type Product } from "@/integrations/api";
 import {
   COLOR_MAP,
+  findVariantForSelection,
   getAvailableSizesForColor,
   getAttributeHex,
+  getInitialSizeForColor,
   getOptionValue,
+  getUnavailableVariantMessage,
   getVariantImageUrl,
+  hasSelectableSizes,
   resolveSelectedSizeForColor,
+  sizeAfterColorChange,
+  sizeOptionSelection,
 } from "@/lib/product-utils";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 interface SizeSelectionModalProps {
   product: Product | null;
@@ -44,7 +51,6 @@ export function SizeSelectionModal({
     orderedSizes.includes("M") ? "M" : orderedSizes[0] || ""
   );
 
-  const needsSize = product ? requiresSize(product.collections) : false;
   const availableSizes =
     orderedSizes.length > 0 ? orderedSizes : ["N/A"];
 
@@ -54,9 +60,16 @@ export function SizeSelectionModal({
         product.options?.find((opt) => opt.name === "Color")?.values || [];
       const sizes =
         product.options?.find((opt) => opt.name === "Size")?.values || [];
+      const nextColor = colors[0] || "";
+      const sizesForColor = getAvailableSizesForColor({
+        sizes: sizes.length > 0 ? sizes : ["N/A"],
+        variants: product.variants || [],
+        selectedColor: nextColor,
+        hasColorOptions: colors.length > 0,
+      });
 
-      setSelectedColor(colors[0] || "");
-      setSelectedSize(sizes.includes("M") ? "M" : sizes[0] || "");
+      setSelectedColor(nextColor);
+      setSelectedSize(getInitialSizeForColor(sizesForColor));
     }
   }, [isOpen, product]);
 
@@ -70,56 +83,46 @@ export function SizeSelectionModal({
     selectedColor,
     hasColorOptions: orderedColors.length > 0,
   });
-  const effectiveSelectedSize =
-    needsSize
-      ? resolveSelectedSizeForColor(selectedSize, availableSizesForColor)
-      : selectedSize;
+  const effectiveSelectedSize = resolveSelectedSizeForColor(
+    selectedSize,
+    availableSizesForColor,
+  );
+  const hasSizeOptions = hasSelectableSizes(orderedSizes);
 
   useEffect(() => {
-    if (!isOpen || !product || !needsSize) return;
-    if (
-      availableSizesForColor.length > 0 &&
-      !availableSizesForColor.includes(selectedSize)
-    ) {
-      setSelectedSize(availableSizesForColor[0] || "");
-    }
-  }, [isOpen, product, needsSize, selectedSize, availableSizesForColor]);
+    if (!isOpen || !product) return;
+    const nextSize = sizeAfterColorChange(selectedSize, availableSizesForColor);
+    if (nextSize !== selectedSize) setSelectedSize(nextSize);
+  }, [isOpen, product, selectedSize, availableSizesForColor]);
 
   const handleAddToCart = () => {
-    let selectedVariantId: string | undefined;
     let finalColor = selectedColor || "N/A";
-    let finalSize = needsSize ? effectiveSelectedSize : "N/A";
+    let finalSize = effectiveSelectedSize || selectedSize || "N/A";
+    const variant = findVariantForSelection(availableVariants, {
+      selectedColor,
+      selectedSize: effectiveSelectedSize,
+      hasColorOptions: orderedColors.length > 0,
+      hasSizeOptions,
+    });
 
-    if (orderedColors.length > 0 || orderedSizes.length > 0) {
-      const variant = availableVariants.find((v) => {
-        const vColor = getOptionValue(v.attributes, "Color");
-        const vSize = getOptionValue(v.attributes, "Size");
-
-        const colorMatch =
-          orderedColors.length === 0 || vColor === selectedColor;
-        const sizeMatch = orderedSizes.length === 0 || vSize === finalSize;
-
-        return colorMatch && sizeMatch;
-      });
-      selectedVariantId = variant?.id;
-
-      if (variant) {
-        finalColor = getOptionValue(variant.attributes, "Color") || finalColor;
-        finalSize = getOptionValue(variant.attributes, "Size") || finalSize;
-      }
-    } else if (availableVariants.length > 0) {
-      const variant = availableVariants[0];
-      selectedVariantId = variant.id;
-      finalColor = getOptionValue(variant.attributes, "Color") || "N/A";
-      finalSize = getOptionValue(variant.attributes, "Size") || "N/A";
-    }
-
-    if (!selectedVariantId) {
+    if (!variant) {
+      toast.error(
+        getUnavailableVariantMessage({
+          selectedSize,
+          selectedColor,
+          effectiveSelectedSize,
+          availableSizesForColor,
+          hasSizeOptions,
+        }),
+      );
       return;
     }
 
-    const variantImageUrl = getVariantImageUrl(product, selectedVariantId);
-    onAddToCart(product.slug, selectedVariantId, finalSize, finalColor, variantImageUrl);
+    finalColor = getOptionValue(variant.attributes, "Color") || finalColor;
+    finalSize = getOptionValue(variant.attributes, "Size") || finalSize;
+
+    const variantImageUrl = getVariantImageUrl(product, variant.id);
+    onAddToCart(product.slug, variant.id, finalSize, finalColor, variantImageUrl);
     onClose();
   };
 
@@ -192,33 +195,38 @@ export function SizeSelectionModal({
             </div>
           )}
 
-          {availableSizesForColor.length > 0 &&
-            availableSizesForColor[0] !== "N/A" &&
-            !(
-              availableSizesForColor.length === 1 &&
-              availableSizesForColor[0] === "One size"
-            ) && (
+          {hasSizeOptions && (
               <div className="mb-6">
                 <label className="block text-[14px] tracking-[-0.48px] mb-3">
                   Size
                 </label>
                 <div className="grid grid-cols-5 gap-2">
-                  {availableSizesForColor.map((size) => {
+                  {orderedSizes.map((size) => {
                     const isAvailable = availableSizesForColor.includes(size);
+                    const isSelected = isAvailable && size === effectiveSelectedSize;
 
                     return (
                       <button
                         key={size}
                         type="button"
-                        onClick={() => setSelectedSize(size)}
-                        disabled={!isAvailable}
+                        onClick={() => {
+                          const selection = sizeOptionSelection(
+                            size,
+                            availableSizesForColor,
+                            selectedColor || undefined,
+                          );
+                          if ("error" in selection) {
+                            toast.error(selection.error);
+                            return;
+                          }
+                          setSelectedSize(selection.size);
+                        }}
                         className={cn(
                           "h-12 border border-border/60 rounded-lg transition-all tracking-[-0.48px] text-[14px] font-medium",
-                          size === selectedSize
+                          isSelected
                             ? "border-[#00EC97] bg-[#00EC97] text-black shadow-sm"
                             : "bg-background/40 text-foreground hover:bg-background/60 hover:border-border",
-                          !isAvailable &&
-                            "opacity-50 cursor-not-allowed line-through"
+                          !isAvailable && "opacity-50 line-through"
                         )}
                       >
                         {size}
@@ -239,7 +247,8 @@ export function SizeSelectionModal({
             <button
               type="button"
               onClick={handleAddToCart}
-              className="flex-1 h-10 bg-[#00EC97] text-black tracking-[-0.48px] text-[14px] hover:bg-[#00d97f] transition-colors rounded-lg font-medium"
+              className="flex-1 h-10 bg-[#00EC97] text-black tracking-[-0.48px] text-[14px] hover:bg-[#00d97f] transition-colors rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={hasSizeOptions && !effectiveSelectedSize}
             >
               Add to Cart
             </button>

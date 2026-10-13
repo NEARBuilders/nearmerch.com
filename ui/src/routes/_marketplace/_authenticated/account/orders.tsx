@@ -6,6 +6,8 @@ import { DataTable } from '@/components/ui/data-table';
 import { apiClient } from '@/utils/orpc';
 import { cn } from '@/lib/utils';
 import { AuditLogViewer } from '@/components/orders/audit-log-viewer';
+import { OrderIdCell } from '@/components/orders/order-id-cell';
+import { OrderItemsCell } from '@/components/orders/order-items-cell';
 import { OrderStatusBadge } from '@/components/orders/order-status-badge';
 import {
   Dialog,
@@ -99,11 +101,7 @@ function OrdersPage() {
       {
         accessorKey: 'id',
         header: 'Order ID',
-        cell: ({ row }) => (
-          <span className="font-mono text-sm font-medium text-foreground">
-            {row.original.id.substring(0, 8)}...
-          </span>
-        ),
+        cell: ({ row }) => <OrderIdCell orderId={row.original.id} />,
       },
       {
         accessorKey: 'createdAt',
@@ -117,20 +115,9 @@ function OrdersPage() {
       {
         accessorKey: 'items',
         header: 'Items',
-        cell: ({ row }) => {
-          const items = row.original.items || [];
-          const totalQty = items.reduce((sum: number, item: any) => sum + item.quantity, 0);
-          const productNames = items.map((item: any) => item.productName).join(', ');
-
-          return (
-            <div className="max-w-[200px]">
-              <div className="text-sm font-semibold text-foreground mb-0.5">{totalQty} item{totalQty !== 1 ? 's' : ''}</div>
-              <div className="text-xs text-foreground/70 dark:text-muted-foreground truncate" title={productNames}>
-                {productNames}
-              </div>
-            </div>
-          );
-        },
+        cell: ({ row }) => (
+          <OrderItemsCell items={row.original.items || []} />
+        ),
       },
       {
         accessorKey: 'status',
@@ -218,18 +205,16 @@ function OrdersPage() {
           <div className="md:hidden space-y-3">
             {orders.map((order) => {
               const hasTracking = order.trackingInfo?.[0]?.trackingUrl;
-              const items = order.items || [];
-              const totalQty = items.reduce((sum: number, item: any) => sum + item.quantity, 0);
-              const productNames = items.map((item: any) => item.productName).join(', ');
 
               return (
                 <div key={order.id} className="rounded-xl bg-background border border-border/60 p-4">
                   <div className="flex items-start justify-between gap-3 mb-2">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className="font-mono text-xs font-semibold text-foreground">
-                          {order.id.substring(0, 8)}...
-                        </span>
+                        <OrderIdCell
+                          orderId={order.id}
+                          textClassName="text-xs font-semibold"
+                        />
                         <OrderStatusBadge
                           status={order.status}
                           note={order.currentStatusNote}
@@ -239,9 +224,7 @@ function OrdersPage() {
                       <p className="text-xs text-foreground/70 dark:text-muted-foreground mb-1">
                         {new Date(order.createdAt).toLocaleDateString()}
                       </p>
-                      <p className="text-xs font-medium text-foreground mb-0.5">
-                        {totalQty} item{totalQty !== 1 ? 's' : ''} · {productNames}
-                      </p>
+                      <OrderItemsCell items={order.items || []} compact />
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-sm font-semibold text-foreground">

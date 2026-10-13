@@ -10,6 +10,8 @@ import { apiClient } from "@/utils/orpc";
 import { ORDER_STATUSES, getAdminStatusLabel, getStatusLabel, getStatusColor, type OrderStatus } from "@/lib/order-status";
 import { cn } from "@/lib/utils";
 import { AuditLogViewer } from "@/components/orders/audit-log-viewer";
+import { OrderIdCell } from "@/components/orders/order-id-cell";
+import { OrderItemsCell } from "@/components/orders/order-items-cell";
 import { OrderStatusNoteButton } from "@/components/orders/order-status-badge";
 import { useUpdateOrderStatus } from "@/integrations/api/orders";
 import {
@@ -576,9 +578,7 @@ function AdminOrdersPage() {
       {
         accessorKey: "id",
         header: "Order ID",
-        cell: ({ row }) => (
-          <span className="font-mono text-sm">{row.original.id.substring(0, 8)}...</span>
-        ),
+        cell: ({ row }) => <OrderIdCell orderId={row.original.id} />,
       },
       {
         accessorKey: "userId",
@@ -601,22 +601,7 @@ function AdminOrdersPage() {
       {
         accessorKey: "items",
         header: "Items",
-        cell: ({ row }) => {
-          const items = row.original.items;
-          const totalQty = items.reduce((sum: number, item) => sum + item.quantity, 0);
-          const productNames = items.map((item) => item.productName).join(", ");
-
-          return (
-            <div className="max-w-[200px]">
-              <div className="text-sm font-medium">
-                {totalQty} item{totalQty !== 1 ? "s" : ""}
-              </div>
-              <div className="text-xs text-[#717182] truncate" title={productNames}>
-                {productNames}
-              </div>
-            </div>
-          );
-        },
+        cell: ({ row }) => <OrderItemsCell items={row.original.items || []} />,
       },
       {
         accessorKey: "status",
@@ -780,18 +765,16 @@ function AdminOrdersPage() {
             {filteredOrders.map((order) => {
               const hasTracking = order.trackingInfo && order.trackingInfo.length > 0;
               const hasPaymentDetails = order.paymentDetails && Object.keys(order.paymentDetails).length > 0;
-              const items = order.items;
-              const totalQty = items.reduce((sum: number, item) => sum + item.quantity, 0);
-              const productNames = items.map((item) => item.productName).join(", ");
 
               return (
                 <div key={order.id} className="rounded-2xl bg-background border border-border/60 p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="font-mono text-sm font-semibold text-foreground">
-                          {order.id.substring(0, 8)}...
-                        </span>
+                        <OrderIdCell
+                          orderId={order.id}
+                          textClassName="text-sm font-semibold"
+                        />
                         <OrderStatusControl
                           order={order}
                           isSaving={savingStatusOrderId === order.id}
@@ -813,12 +796,7 @@ function AdminOrdersPage() {
                   </div>
 
                   <div className="pt-3 border-t border-border/60">
-                    <p className="text-sm font-medium text-foreground mb-1">
-                      {totalQty} item{totalQty !== 1 ? "s" : ""}
-                    </p>
-                    <p className="text-xs text-foreground/70 dark:text-muted-foreground line-clamp-2" title={productNames}>
-                      {productNames}
-                    </p>
+                    <OrderItemsCell items={order.items || []} />
                   </div>
 
                   <div className="flex items-center gap-2 pt-2">

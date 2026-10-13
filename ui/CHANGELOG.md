@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.18.2
+
+### Patch Changes
+
+- 5d3694d: Show a branded 404 page for unknown routes instead of TanStack Router's default "Not Found" text.
+- 0e60eb6: Fix checkout crash when navigating away (back, logo, in-app links) caused by form store unsubscribe cleanup.
+
 ## 1.18.1
 
 ### Patch Changes

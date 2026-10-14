@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.18.3
+
+### Patch Changes
+
+- 06a1181: Improve orders table with clickable product links and copyable order IDs (fixes #228).
+
 ## 1.18.2
 
 ### Patch Changes

@@ -98,12 +98,14 @@ function TermsOfService() {
         </p>
         <p className="text-foreground/90 dark:text-muted-foreground mb-4">
           We accept payment via credit/debit cards through Stripe and cryptocurrency payments 
-          (including USDC on NEAR) through Pingpay. Payment is required at the time of order.
+          (including USDC on NEAR) through Pingpay. Agent and API clients may also pay in USDC 
+          on Base through x402. x402 payments settle onchain to the store treasury and are not 
+          a hosted checkout redirect. Payment is required at the time of order.
         </p>
         <p className="text-foreground/90 dark:text-muted-foreground mb-4">
           If you pay with cryptocurrency, the conversion rate is determined at checkout. Due 
           to market volatility, the fiat equivalent may differ from the displayed price at 
-          the time of conversion.
+          the time of conversion. Onchain x402 settlement is final at the protocol level.
         </p>
       </section>
 
@@ -133,7 +135,8 @@ function TermsOfService() {
         <p className="text-foreground/90 dark:text-muted-foreground mb-4">
           Refunds or replacements may be issued for products that are damaged, defective, 
           misprinted, or lost in transit. Claims must be submitted within 30 days of receipt 
-          or estimated delivery date.
+          or estimated delivery date. x402 / onchain payments are not refundable beyond this 
+          merchant policy and are not reversed by the payment protocol itself.
         </p>
         <p className="text-foreground/90 dark:text-muted-foreground mb-4">
           For complete details, see our{" "}

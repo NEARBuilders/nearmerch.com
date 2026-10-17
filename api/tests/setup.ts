@@ -59,6 +59,10 @@ const TEST_CONFIG = {
     MANUAL_WEBHOOK_SECRET: 'manual_whsec_test_secret',
     // Printful v2 webhook secret is hex; tests compute HMAC over raw body.
     PRINTFUL_WEBHOOK_SECRET: 'a'.repeat(64),
+    X402_ENABLED: 'true',
+    X402_PAY_TO_ADDRESS: '0x0000000000000000000000000000000000000abc',
+    X402_FACILITATOR_URL: 'https://facilitator.test',
+    X402_HOST_SECRET: 'test-x402-host-secret',
   },
 };
 

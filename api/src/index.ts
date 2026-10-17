@@ -38,6 +38,12 @@ import { parsePrintfulWebhook, verifyPrintfulWebhookSignature } from './services
 import { verifyPingPayWebhookSignature } from './services/payment/pingpay/service';
 import { handlePingPayWebhookEffect } from './services/payment/pingpay/webhook';
 import { processPaymentSuccessEffect } from './services/payment/payment-success';
+import {
+  failX402OrderEffect,
+  settleX402OrderEffect,
+  toX402PayOrder,
+  x402HostSecretMatches,
+} from './services/payment/x402';
 import { processManualWebhookEffect } from './services/webhooks/manual';
 import { verifyManualWebhookSignature } from './services/webhooks/manual-auth';
 import { logWebhookProcessingError, readWebhookBody } from './services/webhooks/common/route';
@@ -45,6 +51,13 @@ import { runProviderTestStepEffect, saveProviderTestScenarioEffect } from './ser
 import { findOrderByFulfillmentRefEffect, processLuluWebhookEffect, processPrintfulWebhookEffect } from './services/fulfillment/webhook';
 import { isProviderOrderAlreadyGone } from './utils/provider-order-cancel';
 export * from './schema';
+export {
+  createX402PayApp,
+  getX402FacilitatorUrl,
+  getX402PayToAddress,
+  isX402Enabled,
+} from './services/payment/x402';
+export type { X402PayAppDeps, X402PayOrder as X402PayAppOrder } from './services/payment/x402';
 
 
 
@@ -80,6 +93,10 @@ export default createPlugin({
     RESEND_API_KEY: z.string().optional(),
     API_DATABASE_URL: z.string().default("postgres://postgres:postgres@localhost:5433/api"),
     API_DATABASE_AUTH_TOKEN: z.string().optional(),
+    X402_ENABLED: z.string().optional(),
+    X402_PAY_TO_ADDRESS: z.string().optional(),
+    X402_FACILITATOR_URL: z.string().optional(),
+    X402_HOST_SECRET: z.string().optional(),
   }),
 
   context: z.object({
@@ -218,6 +235,19 @@ export default createPlugin({
         price: null,
         cachedAt: 0,
       };
+
+      if (config.secrets.X402_ENABLED) {
+        process.env.X402_ENABLED = config.secrets.X402_ENABLED;
+      }
+      if (config.secrets.X402_PAY_TO_ADDRESS) {
+        process.env.X402_PAY_TO_ADDRESS = config.secrets.X402_PAY_TO_ADDRESS;
+      }
+      if (config.secrets.X402_FACILITATOR_URL) {
+        process.env.X402_FACILITATOR_URL = config.secrets.X402_FACILITATOR_URL;
+      }
+      if (config.secrets.X402_HOST_SECRET) {
+        process.env.X402_HOST_SECRET = config.secrets.X402_HOST_SECRET;
+      }
 
       console.log("[Marketplace] Plugin initialized");
       console.log(
@@ -991,6 +1021,9 @@ export default createPlugin({
             checkoutSessionId: result.checkoutSessionId,
             checkoutUrl: result.checkoutUrl,
             orderId: result.orderId,
+            totalAmount: result.totalAmount,
+            currency: result.currency,
+            status: result.status,
           };
         }),
 
@@ -1807,6 +1840,119 @@ export default createPlugin({
           logWebhookProcessingError({ provider: 'PingPay', error, details: { signature: signature.substring(0, 20) + "...", timestamp } });
           return { received: true };
         }
+      }),
+
+      getX402PayQuote: builder.getX402PayQuote.handler(async ({ input, context }) => {
+        if (!x402HostSecretMatches(context.reqHeaders)) {
+          throw new ORPCError("UNAUTHORIZED", {
+            message: "Invalid or missing x402 host secret",
+          });
+        }
+        const exit = await managedRuntime.runPromiseExit(
+          Effect.gen(function* () {
+            const store = yield* OrderStore;
+            return yield* store.find(input.orderId);
+          }),
+        );
+
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          if (error instanceof ORPCError) {
+            throw error;
+          }
+          throw new ORPCError("INTERNAL_SERVER_ERROR", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        return exit.value ? toX402PayOrder(exit.value) : null;
+      }),
+
+      settleX402Order: builder.settleX402Order.handler(async ({ input, context, errors }) => {
+        if (!x402HostSecretMatches(context.reqHeaders)) {
+          throw new ORPCError("UNAUTHORIZED", {
+            message: "Invalid or missing x402 host secret",
+          });
+        }
+        const exit = await managedRuntime.runPromiseExit(
+          Effect.gen(function* () {
+            const store = yield* OrderStore;
+            const order = yield* store.find(input.orderId);
+            if (!order) {
+              return null;
+            }
+
+            const settled = yield* settleX402OrderEffect({
+              runtime,
+              order,
+              metadata: {
+                transaction: input.transaction,
+                payer: input.payer,
+                network: input.network,
+              },
+            });
+
+            return toX402PayOrder(settled);
+          }),
+        );
+
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          if (error instanceof ORPCError) {
+            throw error;
+          }
+          throw new ORPCError("BAD_REQUEST", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        if (!exit.value) {
+          throw errors.NOT_FOUND({
+            message: "Order not found",
+            data: { resource: "order", resourceId: input.orderId },
+          });
+        }
+
+        return exit.value;
+      }),
+
+      failX402Order: builder.failX402Order.handler(async ({ input, context }) => {
+        if (!x402HostSecretMatches(context.reqHeaders)) {
+          throw new ORPCError("UNAUTHORIZED", {
+            message: "Invalid or missing x402 host secret",
+          });
+        }
+        const exit = await managedRuntime.runPromiseExit(
+          Effect.gen(function* () {
+            const store = yield* OrderStore;
+            const order = yield* store.find(input.orderId);
+            if (!order) {
+              return null;
+            }
+
+            const failed = yield* failX402OrderEffect({
+              order,
+              metadata: {
+                errorReason: input.errorReason,
+                errorMessage: input.errorMessage,
+              },
+            });
+
+            return toX402PayOrder(failed);
+          }),
+        );
+
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          if (error instanceof ORPCError) {
+            throw error;
+          }
+          throw new ORPCError("INTERNAL_SERVER_ERROR", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        return exit.value;
       }),
 
       cleanupAbandonedDrafts: builder.cleanupAbandonedDrafts.handler(

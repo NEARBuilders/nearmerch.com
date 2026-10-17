@@ -19,6 +19,7 @@ import type { CreateOrderItem } from "./fulfillment/schema";
 import type { PaymentLineItem } from "./payment/schema";
 import { CheckoutError } from "./checkout/errors";
 import { getProvidersAddressRequirementError } from "./checkout/provider-address-requirements";
+import { getX402PayToAddress, isX402Enabled } from "./payment/x402";
 
 
 interface ProviderItemGroup {
@@ -100,7 +101,7 @@ export interface CreateCheckoutParams {
   shippingCost: number;
   successUrl: string;
   cancelUrl: string;
-  paymentProvider?: "stripe" | "pingpay";
+  paymentProvider?: "stripe" | "pingpay" | "x402";
 }
 
 function normalizeNearAccountId(value?: string | null) {
@@ -182,7 +183,10 @@ export function buildReferralFeeDetails({
 export interface CreateCheckoutOutput {
   orderId: string;
   checkoutSessionId: string;
-  checkoutUrl: string;
+  checkoutUrl?: string;
+  totalAmount: number;
+  currency: string;
+  status?: "payment_pending" | "draft_created";
   draftOrderIds: Record<string, string>;
 }
 
@@ -651,6 +655,19 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
               cancelUrl,
             } = params;
 
+            if (params.paymentProvider === "x402") {
+              if (!isX402Enabled()) {
+                return yield* Effect.fail(
+                  new Error("x402 payments are not enabled"),
+                );
+              }
+              if (!getX402PayToAddress()) {
+                return yield* Effect.fail(
+                  new Error("x402 pay-to address is not configured"),
+                );
+              }
+            }
+
             const itemsByProvider = new Map<string, ProviderItemGroup[]>();
 
             let totalSubtotal = 0;
@@ -934,6 +951,49 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
             }
 
             const providerName = params.paymentProvider || "stripe";
+
+            if (providerName === "x402") {
+              yield* orderStore.updatePaymentDetails(order.id, {
+                provider: "x402",
+                request: {
+                  orderId: order.id,
+                  amount: Math.round(totalAmount * 100),
+                  currency,
+                },
+                referral:
+                  referralFeeDetails.length > 0
+                    ? {
+                        items: referralFeeDetails,
+                      }
+                    : undefined,
+                createdAt: new Date().toISOString(),
+              });
+
+              yield* orderStore.updateCheckout(
+                order.id,
+                `x402:${order.id}`,
+                "x402",
+              );
+
+              yield* orderStore.updateDraftOrderIds(order.id, draftOrderIds);
+
+              yield* orderStore.updateStatus(
+                order.id,
+                "payment_pending",
+                "service:x402",
+                "x402.checkout_created",
+              );
+
+              return {
+                orderId: order.id,
+                checkoutSessionId: `x402:${order.id}`,
+                totalAmount,
+                currency,
+                status: "payment_pending" as const,
+                draftOrderIds,
+              };
+            }
+
             const paymentProvider = runtime.getPaymentProvider(providerName);
             if (!paymentProvider) {
               return yield* Effect.fail(
@@ -1083,6 +1143,9 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
               orderId: order.id,
               checkoutSessionId: checkout.sessionId,
               checkoutUrl: checkout.url,
+              totalAmount,
+              currency,
+              status: "draft_created" as const,
               draftOrderIds,
             };
           }),

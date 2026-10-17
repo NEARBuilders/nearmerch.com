@@ -301,7 +301,7 @@ export const OrderSchema = z.object({
   totalAmount: z.number(),
   currency: z.string(),
   checkoutSessionId: z.string().optional(),
-  checkoutProvider: z.enum(["stripe", "near", "pingpay"]).optional(),
+  checkoutProvider: z.enum(["stripe", "near", "pingpay", "x402"]).optional(),
   draftOrderIds: z.record(z.string(), z.string()).optional(),
   paymentDetails: z.record(z.string(), z.unknown()).optional(),
   shippingMethod: z.string().optional(),
@@ -336,18 +336,45 @@ export const CreateCheckoutInputSchema = z.object({
   shippingCost: z.number(),
   successUrl: z.string().url(),
   cancelUrl: z.string().url(),
-  paymentProvider: z.enum(["stripe", "pingpay"]).default("stripe"),
+  paymentProvider: z.enum(["stripe", "pingpay", "x402"]).default("stripe"),
 });
 
 export const CreateCheckoutOutputSchema = z.object({
   checkoutSessionId: z.string(),
-  checkoutUrl: z.string().url(),
+  checkoutUrl: z.string().url().optional(),
   orderId: z.string(),
+  totalAmount: z.number(),
+  currency: z.string(),
+  status: OrderStatusSchema.optional(),
 });
 
 export type CreateCheckoutInput = z.infer<typeof CreateCheckoutInputSchema>;
 export type CreateCheckoutOutput = z.infer<typeof CreateCheckoutOutputSchema>;
 export type CheckoutItemInput = z.infer<typeof CheckoutItemInputSchema>;
+
+export const X402PayOrderSchema = z.object({
+  id: z.string(),
+  status: OrderStatusSchema,
+  totalAmount: z.number(),
+  currency: z.string(),
+  payable: z.boolean(),
+  alreadyPaid: z.boolean(),
+});
+
+export const X402SettleInputSchema = z.object({
+  orderId: z.string(),
+  transaction: z.string().optional(),
+  payer: z.string().optional(),
+  network: z.string().optional(),
+});
+
+export const X402FailInputSchema = z.object({
+  orderId: z.string(),
+  errorReason: z.string().optional(),
+  errorMessage: z.string().optional(),
+});
+
+export type X402PayOrder = z.infer<typeof X402PayOrderSchema>;
 
 export const WebhookResponseSchema = z.object({
   received: z.boolean(),
@@ -504,7 +531,7 @@ export const OrderWithItemsSchema = z.object({
   totalAmount: z.number(),
   currency: z.string(),
   checkoutSessionId: z.string().optional(),
-  checkoutProvider: z.enum(["stripe", "near", "pingpay"]).optional(),
+  checkoutProvider: z.enum(["stripe", "near", "pingpay", "x402"]).optional(),
   draftOrderIds: z.record(z.string(), z.string()).optional(),
   paymentDetails: z.record(z.string(), z.unknown()).optional(),
   shippingMethod: z.string().optional(),

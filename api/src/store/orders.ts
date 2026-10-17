@@ -21,10 +21,11 @@ export class OrderStore extends Context.Tag("OrderStore")<
     readonly findByFulfillmentRef: (fulfillmentReferenceId: string) => Effect.Effect<OrderWithItems | null, Error>;
     readonly findAbandonedDrafts: (olderThanHours: number) => Effect.Effect<OrderWithItems[], Error>;
     readonly findPendingConfirmation: (olderThanMinutes?: number) => Effect.Effect<OrderWithItems[], Error>;
-    readonly updateCheckout: (orderId: string, checkoutSessionId: string, checkoutProvider: 'stripe' | 'near' | 'pingpay') => Effect.Effect<OrderWithItems, Error>;
+    readonly updateCheckout: (orderId: string, checkoutSessionId: string, checkoutProvider: 'stripe' | 'near' | 'pingpay' | 'x402') => Effect.Effect<OrderWithItems, Error>;
     readonly updateDraftOrderIds: (orderId: string, draftOrderIds: Record<string, string>) => Effect.Effect<OrderWithItems, Error>;
     readonly updatePaymentDetails: (orderId: string, paymentDetails: Record<string, unknown>) => Effect.Effect<OrderWithItems, Error>;
     readonly updateStatus: (orderId: string, status: OrderStatus, actor?: string, reason?: string, metadata?: Record<string, unknown>) => Effect.Effect<OrderWithItems, Error>;
+    readonly claimStatus: (orderId: string, fromStatus: OrderStatus, toStatus: OrderStatus, actor?: string, reason?: string, metadata?: Record<string, unknown>) => Effect.Effect<OrderWithItems | null, Error>;
     readonly updateShipping: (orderId: string, shippingAddress: ShippingAddress) => Effect.Effect<OrderWithItems, Error>;
     readonly updateFulfillment: (orderId: string, fulfillmentOrderId: string, actor?: string) => Effect.Effect<OrderWithItems, Error>;
     readonly updateTracking: (orderId: string, trackingInfo: TrackingInfo[], actor?: string, metadata?: Record<string, unknown>) => Effect.Effect<OrderWithItems, Error>;
@@ -111,7 +112,7 @@ export const OrderStoreLive = Layer.effect(
         totalAmount: row.totalAmount / 100,
         currency: row.currency,
         checkoutSessionId: row.checkoutSessionId || undefined,
-        checkoutProvider: row.checkoutProvider === 'stripe' || row.checkoutProvider === 'near' || row.checkoutProvider === 'pingpay'
+        checkoutProvider: row.checkoutProvider === 'stripe' || row.checkoutProvider === 'near' || row.checkoutProvider === 'pingpay' || row.checkoutProvider === 'x402'
           ? row.checkoutProvider 
           : undefined,
         draftOrderIds: row.draftOrderIds || undefined,
@@ -467,6 +468,54 @@ export const OrderStoreLive = Layer.effect(
             return order;
           },
           catch: (error) => new Error(`Failed to update order status: ${error}`),
+        }),
+
+      claimStatus: (orderId, fromStatus, toStatus, actor?, reason?, metadata?) =>
+        Effect.tryPromise({
+          try: async () => {
+            const claimed = await db
+              .update(schema.orders)
+              .set({
+                status: toStatus,
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(schema.orders.id, orderId),
+                  eq(schema.orders.status, fromStatus),
+                  eq(schema.orders.isDeleted, false),
+                ),
+              )
+              .returning({ id: schema.orders.id });
+
+            if (claimed.length === 0) {
+              return null;
+            }
+
+            const auditMetadata = metadata || {};
+            if (reason) {
+              auditMetadata.reason = reason;
+            }
+
+            await db.insert(schema.orderAuditLogs).values({
+              id: crypto.randomUUID(),
+              orderId,
+              actor: actor || "system",
+              action: "status_change",
+              field: "status",
+              oldValue: fromStatus,
+              newValue: toStatus,
+              metadata: auditMetadata,
+              createdAt: new Date(),
+            });
+
+            const order = await findOrderById(orderId);
+            if (!order) {
+              throw new Error("Order not found");
+            }
+            return order;
+          },
+          catch: (error) => new Error(`Failed to claim order status: ${error}`),
         }),
 
       updateShipping: (orderId, shippingAddress) =>

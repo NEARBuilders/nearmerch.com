@@ -31,6 +31,8 @@
   "devDependencies": {
     "@effect/language-service": "^0.72.0",
     "@module-federation/node": "^2.7.25",
+    "@orpc/openapi": "^1.13.4",
+    "@orpc/zod": "^1.13.4",
     "@rspack/cli": "^1.7.3",
     "@rspack/core": "^1.7.3",
     "@types/node": "catalog:",

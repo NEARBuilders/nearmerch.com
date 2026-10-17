@@ -2,23 +2,47 @@ import * as crypto from 'crypto';
 import { ORPCError } from 'every-plugin/orpc';
 import type { OrderStatus, TrackingInfo } from '../../../schema';
 
+type PrintfulWebhookOrder = {
+  id?: number | string;
+  external_id?: string;
+  status?: string;
+};
+
+type PrintfulWebhookShipment = {
+  tracking_number?: string;
+  tracking_url?: string;
+  service?: string;
+  carrier?: string;
+  order_id?: number | string;
+  order_external_id?: string;
+  order?: PrintfulWebhookOrder;
+};
+
 type PrintfulWebhookPayload = {
   type?: string;
-  data?: { 
-    order?: { 
-      external_id?: string;
-      status?: string;
-    };
+  data?: {
+    order?: PrintfulWebhookOrder;
     catalog_product?: {
       id?: number;
     };
-    shipment?: {
-      tracking_number?: string;
-      tracking_url?: string;
-      service?: string;
-    };
+    shipment?: PrintfulWebhookShipment;
   };
 };
+
+const SHIPMENT_SENT_EVENTS = new Set(['shipment_sent', 'package_shipped']);
+const TERMINAL_AFTER_SHIPPED: OrderStatus[] = [
+  'delivered',
+  'returned',
+  'cancelled',
+  'partially_cancelled',
+  'refunded',
+];
+
+function asId(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  const text = String(value).trim();
+  return text.length > 0 ? text : undefined;
+}
 
 export function verifyPrintfulWebhookSignature(options: {
   rawBody: string;
@@ -52,6 +76,7 @@ export function verifyPrintfulWebhookSignature(options: {
 export function parsePrintfulWebhook(rawBody: string): {
   eventType: string;
   externalId?: string;
+  printfulOrderId?: string;
   catalogProductId?: number;
   data?: PrintfulWebhookPayload['data'];
 } {
@@ -62,9 +87,19 @@ export function parsePrintfulWebhook(rawBody: string): {
     return { eventType: 'unknown' };
   }
 
+  const shipment = payload.data?.shipment;
+  const order = payload.data?.order ?? shipment?.order;
+
   return {
     eventType: payload.type || 'unknown',
-    externalId: payload.data?.order?.external_id,
+    externalId:
+      asId(order?.external_id) ??
+      asId(shipment?.order_external_id) ??
+      asId(shipment?.order?.external_id),
+    printfulOrderId:
+      asId(order?.id) ??
+      asId(shipment?.order_id) ??
+      asId(shipment?.order?.id),
     catalogProductId: payload.data?.catalog_product?.id,
     data: payload.data,
   };
@@ -80,6 +115,22 @@ export function computePrintfulUpdate(options: {
   let newStatus: OrderStatus | undefined;
   let newTracking: TrackingInfo[] | undefined;
   let shouldRetryConfirmation = false;
+
+  if (SHIPMENT_SENT_EVENTS.has(eventType)) {
+    if (!TERMINAL_AFTER_SHIPPED.includes(currentStatus)) {
+      newStatus = 'shipped';
+    }
+    if (data?.shipment) {
+      newTracking = [
+        {
+          trackingCode: data.shipment.tracking_number || '',
+          trackingUrl: data.shipment.tracking_url || '',
+          shipmentMethodName: data.shipment.service || data.shipment.carrier || 'Standard',
+        },
+      ];
+    }
+    return { newStatus, newTracking, shouldRetryConfirmation };
+  }
 
   switch (eventType) {
     case 'order_created':
@@ -115,19 +166,6 @@ export function computePrintfulUpdate(options: {
         case 'onhold':
           newStatus = 'on_hold';
           break;
-      }
-      break;
-
-    case 'shipment_sent':
-      newStatus = 'shipped';
-      if (data?.shipment) {
-        newTracking = [
-          {
-            trackingCode: data.shipment.tracking_number || '',
-            trackingUrl: data.shipment.tracking_url || '',
-            shipmentMethodName: data.shipment.service || 'Standard',
-          },
-        ];
       }
       break;
 

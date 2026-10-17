@@ -19,6 +19,7 @@ export class OrderStore extends Context.Tag("OrderStore")<
     readonly findByUser: (userId: string, options: { limit?: number; offset?: number; includeDeleted?: boolean }) => Effect.Effect<{ orders: OrderWithItems[]; total: number }, Error>;
     readonly findByCheckoutSession: (checkoutSessionId: string) => Effect.Effect<OrderWithItems | null, Error>;
     readonly findByFulfillmentRef: (fulfillmentReferenceId: string) => Effect.Effect<OrderWithItems | null, Error>;
+    readonly findByProviderOrderId: (providerOrderId: string) => Effect.Effect<OrderWithItems | null, Error>;
     readonly findAbandonedDrafts: (olderThanHours: number) => Effect.Effect<OrderWithItems[], Error>;
     readonly findPendingConfirmation: (olderThanMinutes?: number) => Effect.Effect<OrderWithItems[], Error>;
     readonly updateCheckout: (orderId: string, checkoutSessionId: string, checkoutProvider: 'stripe' | 'near' | 'pingpay') => Effect.Effect<OrderWithItems, Error>;
@@ -321,6 +322,31 @@ export const OrderStoreLive = Layer.effect(
             return await rowToOrder(results[0]!);
           },
           catch: (error) => new Error(`Failed to find order by fulfillment ref: ${error}`),
+        }),
+
+      findByProviderOrderId: (providerOrderId) =>
+        Effect.tryPromise({
+          try: async () => {
+            const normalized = providerOrderId.replace(/^PF/i, '');
+            const results = await db
+              .select()
+              .from(schema.orders)
+              .where(or(
+                eq(schema.orders.fulfillmentOrderId, providerOrderId),
+                eq(schema.orders.fulfillmentOrderId, normalized),
+                eq(schema.orders.fulfillmentOrderId, `PF${normalized}`),
+                sql`${schema.orders.draftOrderIds}->>'printful' = ${providerOrderId}`,
+                sql`${schema.orders.draftOrderIds}->>'printful' = ${normalized}`,
+              ))
+              .limit(1);
+
+            if (results.length === 0) {
+              return null;
+            }
+
+            return await rowToOrder(results[0]!);
+          },
+          catch: (error) => new Error(`Failed to find order by provider order id: ${error}`),
         }),
 
       findAbandonedDrafts: (olderThanHours) =>

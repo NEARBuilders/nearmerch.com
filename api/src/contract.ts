@@ -497,7 +497,7 @@ export const contract = oc.router({
   updateOrderStatus: oc
     .route({
       method: "POST",
-      path: "/admin/orders/{id}/status",
+      path: "/admin/orders/{orderId}/status",
       summary: "Update order status (Admin)",
       description:
         "Manually updates the status of an order. Logs the change in audit log.",

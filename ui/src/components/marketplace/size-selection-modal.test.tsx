@@ -77,6 +77,25 @@ const product: Product = {
   priceLocked: false,
 };
 
+const singleVariantProduct: Product = {
+  ...product,
+  id: "near-book",
+  slug: "near-book",
+  title: "NEAR Book",
+  options: [],
+  images: [],
+  variants: [
+    {
+      id: "near-book-default",
+      title: "Default",
+      price: 20,
+      currency: "USD",
+      attributes: [],
+      availableForSale: true,
+    },
+  ],
+};
+
 describe("SizeSelectionModal", () => {
   afterEach(() => {
     cleanup();
@@ -128,5 +147,53 @@ describe("SizeSelectionModal", () => {
       "Blue Jean",
       "https://example.com/blue-jean.png"
     );
+  });
+
+  it("opens for a product without options after mounting with no product", () => {
+    const onAddToCart = vi.fn();
+    const { rerender } = render(
+      <SizeSelectionModal
+        product={null}
+        isOpen={false}
+        onClose={vi.fn()}
+        onAddToCart={onAddToCart}
+      />
+    );
+
+    expect(() =>
+      rerender(
+        <SizeSelectionModal
+          product={singleVariantProduct}
+          isOpen
+          onClose={vi.fn()}
+          onAddToCart={onAddToCart}
+        />
+      )
+    ).not.toThrow();
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByTestId("product-card").textContent).toBe("NEAR Book");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add to Cart" }));
+
+    expect(onAddToCart).toHaveBeenCalledWith(
+      "near-book",
+      "near-book-default",
+      "N/A",
+      "N/A",
+      undefined
+    );
+
+    expect(() =>
+      rerender(
+        <SizeSelectionModal
+          product={null}
+          isOpen={false}
+          onClose={vi.fn()}
+          onAddToCart={onAddToCart}
+        />
+      )
+    ).not.toThrow();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

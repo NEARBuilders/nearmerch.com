@@ -73,9 +73,7 @@ export function SizeSelectionModal({
     }
   }, [isOpen, product]);
 
-  if (!product) return null;
-
-  const availableVariants = product.variants || [];
+  const availableVariants = product?.variants || [];
 
   const availableSizesForColor = getAvailableSizesForColor({
     sizes: availableSizes,
@@ -94,6 +92,8 @@ export function SizeSelectionModal({
     const nextSize = sizeAfterColorChange(selectedSize, availableSizesForColor);
     if (nextSize !== selectedSize) setSelectedSize(nextSize);
   }, [isOpen, product, selectedSize, availableSizesForColor]);
+
+  if (!product) return null;
 
   const handleAddToCart = () => {
     let finalColor = selectedColor || "N/A";

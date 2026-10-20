@@ -33,6 +33,7 @@ import {
   type Product,
 } from '@/integrations/api';
 import { COLOR_MAP } from '@/lib/product-utils';
+import { rethrowAsRouteError } from '@/lib/route-errors';
 import {
   absoluteUrl,
   buildCollectionDescription,
@@ -63,7 +64,9 @@ export const Route = createFileRoute('/_marketplace/collections/$collection')({
       };
     }
 
-    const detailData = await queryClient.ensureQueryData(collectionLoaders.detail(params.collection));
+    const detailData = await queryClient
+      .ensureQueryData(collectionLoaders.detail(params.collection))
+      .catch(rethrowAsRouteError);
     return {
       kind: 'collection' as const,
       collection: detailData.collection,

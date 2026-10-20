@@ -42,6 +42,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { captureEvent } from "@/lib/posthog";
+import { rethrowAsRouteError } from "@/lib/route-errors";
 import { apiClient } from "@/utils/orpc";
 import { useNearAccountId } from "@/hooks/use-near-account-id";
 import { toast } from "sonner";
@@ -90,56 +91,16 @@ function formatFeeType(type: string): string {
   }
 }
 
-function getProductLoadErrorCopy(error?: unknown) {
-  const err = error as {
-    message?: string;
-    code?: string;
-    status?: number;
-  } | null;
-  const message = err?.message ?? "";
-  const isNotFound =
-    err?.status === 404 ||
-    err?.code === "NOT_FOUND" ||
-    /product not found/i.test(message) ||
-    /no longer available/i.test(message);
-
-  if (isNotFound) {
-    return {
-      title: "Product Not Available",
-      description: "This product is no longer available.",
-      showRetry: false,
-    };
-  }
-
-  return {
-    title: "Unable to Load Product",
-    description:
-      "Failed to load product details. Please check your connection and try again.",
-    showRetry: true,
-  };
-}
-
 export const Route = createFileRoute("/_marketplace/products/$productId")({
   pendingComponent: LoadingSpinner,
   loader: async ({ params, context }) => {
     const siteUrl = context.runtimeConfig?.hostUrl ?? '';
     const assetsUrl = context.assetsUrl ?? '';
 
-    try {
-      const data = await apiClient.getProduct({ id: params.productId });
-      return { data: { product: data.product }, siteUrl, assetsUrl };
-    } catch (error) {
-      const copy = getProductLoadErrorCopy(error);
-      // Never pass raw API text (e.g. slug) through to the UI.
-      return {
-        error: new Error(copy.description),
-        data: null,
-        siteUrl,
-        assetsUrl,
-        errorTitle: copy.title,
-        showRetry: copy.showRetry,
-      };
-    }
+    const data = await apiClient
+      .getProduct({ id: params.productId })
+      .catch(rethrowAsRouteError);
+    return { data: { product: data.product }, siteUrl, assetsUrl };
   },
   head: ({ loaderData }) => {
     const product = loaderData?.data?.product;
@@ -171,22 +132,21 @@ export const Route = createFileRoute("/_marketplace/products/$productId")({
       jsonLd: url ? buildProductJsonLd(product, url, productImage) : null,
     });
   },
-  errorComponent: ({ error }) => {
+  errorComponent: () => {
     const router = useRouter();
-    const copy = getProductLoadErrorCopy(error);
 
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="max-w-md text-center space-y-4">
           <div className="text-destructive">
             <AlertCircle className="h-12 w-12 mx-auto mb-4" />
-            <h2 className="text-xl font-semibold">{copy.title}</h2>
+            <h2 className="text-xl font-semibold">Unable to Load Product</h2>
           </div>
-          <p className="text-muted-foreground">{copy.description}</p>
+          <p className="text-muted-foreground">
+            Failed to load product details. Please check your connection and try again.
+          </p>
           <div className="flex gap-3 justify-center">
-            {copy.showRetry && (
-              <Button onClick={() => router.invalidate()}>Try Again</Button>
-            )}
+            <Button onClick={() => router.invalidate()}>Try Again</Button>
             <Button
               variant="outline"
               onClick={() => router.navigate({ to: "/" })}
@@ -210,39 +170,6 @@ function ProductDetailPage() {
   const openCartSidebar = useCartSidebarStore((state) => state.open);
 
   const loaderData = Route.useLoaderData();
-
-  if (loaderData.error || !loaderData.data) {
-    const copy =
-      "errorTitle" in loaderData && loaderData.errorTitle
-        ? {
-            title: loaderData.errorTitle,
-            description:
-              loaderData.error?.message ||
-              "This product is no longer available.",
-            showRetry: Boolean(loaderData.showRetry),
-          }
-        : getProductLoadErrorCopy(loaderData.error);
-
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="max-w-md text-center space-y-4">
-          <div className="text-destructive">
-            <AlertCircle className="h-12 w-12 mx-auto mb-4" />
-            <h2 className="text-xl font-semibold">{copy.title}</h2>
-          </div>
-          <p className="text-muted-foreground">{copy.description}</p>
-          <div className="flex gap-3 justify-center">
-            {copy.showRetry && (
-              <Button onClick={() => window.location.reload()}>Try Again</Button>
-            )}
-            <Link to="/">
-              <Button variant="outline">Go Home</Button>
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const { product } = loaderData.data;
 

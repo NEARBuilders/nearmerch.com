@@ -8,7 +8,7 @@ import { getProductVariantPrice } from "@/lib/product-price";
 import { useCartStore } from "@/stores/cart-store";
 import { useEffect, useMemo } from "react";
 
-interface CartItemWithProduct extends CartItem {
+export interface CartItemWithProduct extends CartItem {
   id: string;
   product: Product;
   unitPrice: number;

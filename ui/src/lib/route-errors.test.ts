@@ -17,6 +17,15 @@ describe("isNotFoundError", () => {
     expect(isNotFoundError(new ORPCError("NOT_FOUND", { message: "Collection not found: nope" }))).toBe(true);
   });
 
+  it("matches a NOT_FOUND error from another oRPC copy (SSR across federation)", () => {
+    const foreign = Object.assign(new Error("Collection not found: nope"), {
+      code: "NOT_FOUND",
+      status: 404,
+    });
+    expect(foreign instanceof ORPCError).toBe(false);
+    expect(isNotFoundError(foreign)).toBe(true);
+  });
+
   it("ignores other oRPC codes and plain errors that mention not found", () => {
     expect(isNotFoundError(new ORPCError("INTERNAL_SERVER_ERROR"))).toBe(false);
     expect(isNotFoundError(new Error("Product not found: nope"))).toBe(false);

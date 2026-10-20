@@ -12,6 +12,7 @@ import {
 	createRouter as createTanStackRouter,
 } from "@tanstack/react-router";
 import { NotFoundPage } from "./components/not-found-page";
+import { isNotFoundError } from "./lib/route-errors";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
 import type { CreateRouterOptions } from "./types";
@@ -60,7 +61,8 @@ export function createRouter(opts: CreateRouterOptions = {}) {
           staleTime: 5 * 60 * 1000,
           gcTime: 30 * 60 * 1000,
           refetchOnWindowFocus: false,
-          retry: 1,
+          retry: (failureCount, error) =>
+            !isNotFoundError(error) && failureCount < 1,
         },
       },
     });

@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { parseOrderIdFromPayPath, usdDollarsToUsdcAtomic } from '@/services/payment/x402/amount';
 import {
+  isNonTerminalX402SettleFailure,
   isX402AlreadyPaid,
   isX402Order,
   isX402Payable,
+  isX402QuoteExpired,
+  isX402SettlePending,
 } from '@/services/payment/x402/settlement';
+import { X402_MAX_TIMEOUT_SECONDS, X402_USDC_EXTRA } from '@/services/payment/x402/constants';
 import type { OrderWithItems } from '@/schema';
 
 function order(overrides: Partial<OrderWithItems> = {}): OrderWithItems {
@@ -54,5 +58,45 @@ describe('x402 payability', () => {
     expect(isX402Order(pingpay)).toBe(false);
     expect(isX402Payable(pingpay)).toBe(false);
     expect(isX402AlreadyPaid(pingpay)).toBe(false);
+  });
+
+  it('does not treat quote-expired or settle-pending orders as payable', () => {
+    const expired = order({
+      createdAt: new Date(Date.now() - (X402_MAX_TIMEOUT_SECONDS + 1) * 1000).toISOString(),
+    });
+    expect(isX402QuoteExpired(expired)).toBe(true);
+    expect(isX402Payable(expired)).toBe(false);
+
+    const pending = order({
+      paymentDetails: { provider: 'x402', settlePending: true },
+    });
+    expect(isX402SettlePending(pending)).toBe(true);
+    expect(isX402Payable(pending)).toBe(false);
+  });
+});
+
+describe('x402 EIP-712 extra', () => {
+  it('advertises Base mainnet USDC domain fields for EIP-3009 signing', () => {
+    expect(X402_USDC_EXTRA.assetTransferMethod).toBe('eip3009');
+    expect(X402_USDC_EXTRA.name).toBe('USD Coin');
+    expect(X402_USDC_EXTRA.version).toBe('2');
+  });
+});
+
+describe('x402 settle failure terminality', () => {
+  it('treats settlement_pending and facilitator timeouts as non-terminal', () => {
+    expect(
+      isNonTerminalX402SettleFailure({
+        errorReason: 'settlement_pending',
+        message: 'settlement_pending',
+      }),
+    ).toBe(true);
+    expect(isNonTerminalX402SettleFailure(new Error('settlement_pending'))).toBe(true);
+    expect(isNonTerminalX402SettleFailure({ name: 'FacilitatorTimeoutError' })).toBe(true);
+  });
+
+  it('treats other settle errors as terminal', () => {
+    expect(isNonTerminalX402SettleFailure(new Error('settlement_failed'))).toBe(false);
+    expect(isNonTerminalX402SettleFailure({ errorReason: 'insufficient_funds' })).toBe(false);
   });
 });

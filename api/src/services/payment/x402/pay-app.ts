@@ -10,12 +10,16 @@ import { paymentMiddlewareFromHTTPServer } from "@x402/hono";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { parseOrderIdFromPayPath, usdDollarsToUsdcAtomic } from "./amount";
 import {
+  getX402Network,
+  getX402UsdcAddress,
+  getX402UsdcExtra,
+} from "./config";
+import {
   X402_MAX_TIMEOUT_SECONDS,
-  X402_NETWORK,
   X402_PAY_PATH_PATTERN,
   X402_SCHEME,
-  X402_USDC_BASE,
 } from "./constants";
+import { isNonTerminalX402SettleFailure } from "./settlement";
 
 export type X402PayOrder = {
   id: string;
@@ -24,6 +28,8 @@ export type X402PayOrder = {
   currency: string;
   payable: boolean;
   alreadyPaid: boolean;
+  expired: boolean;
+  settlePending: boolean;
 };
 
 export type X402PayAppDeps = {
@@ -56,13 +62,27 @@ function requireOrderId(path: string): string {
   return orderId;
 }
 
+function settleErrorReason(error: unknown): string | undefined {
+  if (error && typeof error === "object" && "errorReason" in error) {
+    const reason = error.errorReason;
+    if (typeof reason === "string" && reason.length > 0) {
+      return reason;
+    }
+  }
+
+  return error instanceof Error ? error.message : undefined;
+}
+
 export function createX402PayApp(deps: X402PayAppDeps): Hono {
+  const network = getX402Network();
+  const usdc = getX402UsdcAddress();
+  const extra = getX402UsdcExtra();
   const facilitator =
     deps.facilitator ??
     new HTTPFacilitatorClient({ url: deps.facilitatorUrl ?? "" });
 
   const resourceServer = new x402ResourceServer(facilitator).register(
-    X402_NETWORK,
+    network,
     new ExactEvmScheme(),
   );
 
@@ -80,8 +100,11 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
   resourceServer.onSettleFailure(async (context) => {
     const orderId = orderIdFromTransport(context.transportContext);
     if (!orderId) return;
+    const nonTerminal = isNonTerminalX402SettleFailure(context.error);
     await deps.failOrder(orderId, {
-      errorReason: context.error.message,
+      errorReason: nonTerminal
+        ? "settlement_pending"
+        : settleErrorReason(context.error),
       errorMessage: context.error.message,
     });
   });
@@ -92,9 +115,10 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
       mimeType: "application/json",
       accepts: {
         scheme: X402_SCHEME,
-        network: X402_NETWORK,
+        network,
         payTo: deps.payTo,
         maxTimeoutSeconds: X402_MAX_TIMEOUT_SECONDS,
+        extra,
         price: async (context: { path: string }) => {
           const orderId = requireOrderId(context.path);
           const order = await deps.getOrder(orderId);
@@ -102,8 +126,9 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
             throw new Error("order_not_found");
           }
           return {
-            asset: X402_USDC_BASE,
+            asset: usdc,
             amount: usdDollarsToUsdcAtomic(order.totalAmount),
+            extra,
           };
         },
       },
@@ -125,6 +150,14 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
 
     if (order.alreadyPaid) {
       return { grantAccess: true };
+    }
+
+    if (order.expired) {
+      return { abort: true, reason: "expired" };
+    }
+
+    if (order.settlePending) {
+      return { abort: true, reason: "settlement_pending" };
     }
 
     if (!order.payable) {

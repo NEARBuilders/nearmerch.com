@@ -1,11 +1,19 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import type { FacilitatorClient } from '@x402/core/server';
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from '@x402/core/http';
-import { getPluginClient, runMigrations, teardown } from '../setup';
+import { getPluginClient, getTestDb, runMigrations, teardown } from '../setup';
 import { clearOrders, clearProducts, createTestProduct, createTestProductVariant } from '../helpers';
+import * as schema from '@/db/schema';
 import { createX402PayApp } from '@/services/payment/x402/pay-app';
 import { usdDollarsToUsdcAtomic } from '@/services/payment/x402/amount';
-import { X402_NETWORK, X402_SCHEME, X402_USDC_BASE } from '@/services/payment/x402/constants';
+import {
+  X402_MAX_TIMEOUT_SECONDS,
+  X402_NETWORK,
+  X402_SCHEME,
+  X402_USDC_BASE,
+  X402_USDC_EXTRA,
+} from '@/services/payment/x402/constants';
 import { X402_HOST_SECRET_HEADER } from '@/services/payment/x402/config';
 
 const TEST_USER = 'test-user.near';
@@ -134,7 +142,7 @@ function paymentHeader(amount: string) {
       asset: X402_USDC_BASE,
       payTo: PAY_TO,
       maxTimeoutSeconds: 900,
-      extra: {},
+      extra: { ...X402_USDC_EXTRA },
     },
     payload: {
       signature: `0x${'ab'.repeat(65)}`,
@@ -155,6 +163,7 @@ describe('x402 checkout flow', () => {
     process.env.X402_ENABLED = 'true';
     process.env.X402_PAY_TO_ADDRESS = PAY_TO;
     process.env.X402_HOST_SECRET = HOST_SECRET;
+    process.env.X402_NETWORK = X402_NETWORK;
     await runMigrations();
   });
 
@@ -200,7 +209,14 @@ describe('x402 checkout flow', () => {
     const paymentRequiredHeader =
       response.headers.get('payment-required') ?? response.headers.get('PAYMENT-REQUIRED');
     const body = (await response.json()) as {
-      accepts?: Array<{ scheme: string; network: string; asset: string; amount: string; payTo: string }>;
+      accepts?: Array<{
+        scheme: string;
+        network: string;
+        asset: string;
+        amount: string;
+        payTo: string;
+        extra?: Record<string, unknown>;
+      }>;
     };
     const fromHeader = paymentRequiredHeader
       ? decodePaymentRequiredHeader(paymentRequiredHeader)
@@ -211,6 +227,11 @@ describe('x402 checkout flow', () => {
     expect(accept?.asset).toBe(X402_USDC_BASE);
     expect(accept?.payTo.toLowerCase()).toBe(PAY_TO.toLowerCase());
     expect(accept?.amount).toBe(usdDollarsToUsdcAtomic(checkoutResult.totalAmount));
+    expect(accept?.extra).toMatchObject({
+      assetTransferMethod: 'eip3009',
+      name: 'USD Coin',
+      version: '2',
+    });
   });
 
   it('settles a valid payment and confirms fulfillment without double-confirming retries', async () => {
@@ -256,6 +277,12 @@ describe('x402 checkout flow', () => {
     });
 
     expect(response.status).toBe(402);
+    const paymentRequiredHeader =
+      response.headers.get('payment-required') ?? response.headers.get('PAYMENT-REQUIRED');
+    const fromHeader = paymentRequiredHeader
+      ? decodePaymentRequiredHeader(paymentRequiredHeader)
+      : undefined;
+    expect(fromHeader?.error).toBe('insufficient_funds');
     const order = await client.getOrder({ id: checkoutResult.orderId });
     expect(order.order.status).toBe('payment_pending');
   });
@@ -374,7 +401,143 @@ describe('x402 checkout flow', () => {
     });
 
     expect(response.status).toBe(402);
+    const paymentRequiredHeader =
+      response.headers.get('payment-required') ?? response.headers.get('PAYMENT-REQUIRED');
+    const fromHeader = paymentRequiredHeader
+      ? decodePaymentRequiredHeader(paymentRequiredHeader)
+      : undefined;
+    expect(fromHeader?.error).toBe('invalid_exact_evm_payload_invalid_asset');
     const order = await client.getOrder({ id: checkoutResult.orderId });
     expect(order.order.status).toBe('payment_pending');
+  });
+
+  it('does not mark the order failed when settlement is pending confirmation', async () => {
+    const { checkoutResult, client } = await createX402Order();
+    let settleCalls = 0;
+    const facilitator = mockFacilitator();
+    facilitator.settle = async () => {
+      settleCalls += 1;
+      return {
+        success: false,
+        errorReason: 'settlement_pending',
+        transaction: '0xpendingtx',
+        network: X402_NETWORK,
+        payer: '0x1111111111111111111111111111111111111111',
+      };
+    };
+    const app = createPayApp(facilitator);
+    const amount = usdDollarsToUsdcAtomic(checkoutResult.totalAmount);
+    const headers = { 'payment-signature': paymentHeader(amount) };
+
+    const response = await app.request(`/orders/${checkoutResult.orderId}/pay`, {
+      method: 'POST',
+      headers,
+    });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    let order = await client.getOrder({ id: checkoutResult.orderId });
+    expect(order.order.status).toBe('payment_pending');
+    expect(order.order.paymentDetails?.settlePending).toBe(true);
+    const settleCallsAfterFirst = settleCalls;
+
+    const retry = await app.request(`/orders/${checkoutResult.orderId}/pay`, {
+      method: 'POST',
+      headers,
+    });
+    expect(retry.status).toBeGreaterThanOrEqual(400);
+    expect(retry.status).not.toBe(200);
+    const retryPaymentRequiredHeader =
+      retry.headers.get('payment-required') ?? retry.headers.get('PAYMENT-REQUIRED');
+    const retryFromHeader = retryPaymentRequiredHeader
+      ? decodePaymentRequiredHeader(retryPaymentRequiredHeader)
+      : undefined;
+    const retryBody = (await retry.json()) as { error?: string };
+    expect(retryFromHeader?.error ?? retryBody.error).toBe('settlement_pending');
+    expect(settleCalls).toBe(settleCallsAfterFirst);
+
+    order = await client.getOrder({ id: checkoutResult.orderId });
+    expect(order.order.status).toBe('payment_pending');
+  });
+
+  it('does not mutate order state for an expired payment authorization', async () => {
+    const { checkoutResult, client } = await createX402Order();
+    const facilitator = mockFacilitator({ valid: false });
+    facilitator.verify = async () => ({
+      isValid: false,
+      invalidReason: 'invalid_exact_evm_payload_authorization_valid_before',
+      payer: '0x1111111111111111111111111111111111111111',
+    });
+    const app = createPayApp(facilitator);
+    const amount = usdDollarsToUsdcAtomic(checkoutResult.totalAmount);
+
+    const response = await app.request(`/orders/${checkoutResult.orderId}/pay`, {
+      method: 'POST',
+      headers: { 'payment-signature': paymentHeader(amount) },
+    });
+
+    expect(response.status).toBe(402);
+    const paymentRequiredHeader =
+      response.headers.get('payment-required') ?? response.headers.get('PAYMENT-REQUIRED');
+    const fromHeader = paymentRequiredHeader
+      ? decodePaymentRequiredHeader(paymentRequiredHeader)
+      : undefined;
+    expect(fromHeader?.error).toBe('invalid_exact_evm_payload_authorization_valid_before');
+    const order = await client.getOrder({ id: checkoutResult.orderId });
+    expect(order.order.status).toBe('payment_pending');
+  });
+
+  it('returns expired for a quote past maxTimeoutSeconds and does not mutate state', async () => {
+    const { checkoutResult, client } = await createX402Order();
+    await getTestDb()
+      .update(schema.orders)
+      .set({
+        createdAt: new Date(Date.now() - (X402_MAX_TIMEOUT_SECONDS + 60) * 1000),
+      })
+      .where(eq(schema.orders.id, checkoutResult.orderId));
+
+    const app = createPayApp(mockFacilitator());
+    const response = await app.request(`/orders/${checkoutResult.orderId}/pay`, {
+      method: 'POST',
+      headers: {
+        'payment-signature': paymentHeader(
+          usdDollarsToUsdcAtomic(checkoutResult.totalAmount),
+        ),
+      },
+    });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).not.toBe(200);
+    const paymentRequiredHeader =
+      response.headers.get('payment-required') ?? response.headers.get('PAYMENT-REQUIRED');
+    const fromHeader = paymentRequiredHeader
+      ? decodePaymentRequiredHeader(paymentRequiredHeader)
+      : undefined;
+    const body = (await response.json()) as { error?: string };
+    expect(fromHeader?.error ?? body.error).toBe('expired');
+    const order = await client.getOrder({ id: checkoutResult.orderId });
+    expect(order.order.status).toBe('payment_pending');
+  });
+
+  it('does not overwrite a paid order when a delayed settle failure arrives', async () => {
+    const { checkoutResult, client } = await createX402Order();
+    const app = createPayApp(mockFacilitator());
+    const amount = usdDollarsToUsdcAtomic(checkoutResult.totalAmount);
+
+    const paid = await app.request(`/orders/${checkoutResult.orderId}/pay`, {
+      method: 'POST',
+      headers: { 'payment-signature': paymentHeader(amount) },
+    });
+    expect(paid.status).toBe(200);
+
+    const host = await getX402HostClient();
+    const failed = await host.failX402Order({
+      orderId: checkoutResult.orderId,
+      errorReason: 'settlement_failed',
+      errorMessage: 'late failure',
+    });
+    expect(['paid', 'processing', 'paid_pending_fulfillment']).toContain(failed?.status);
+
+    const order = await client.getOrder({ id: checkoutResult.orderId });
+    expect(['paid', 'processing', 'paid_pending_fulfillment']).toContain(order.order.status);
   });
 });

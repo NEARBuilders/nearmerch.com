@@ -3,6 +3,7 @@ import { createX402PayApp } from "../../../api/src/services/payment/x402/pay-app
 import {
   getX402FacilitatorUrl,
   getX402HostSecret,
+  getX402Network,
   getX402PayToAddress,
   isX402Enabled,
   X402_HOST_SECRET_HEADER,
@@ -18,6 +19,8 @@ type X402PluginClient = {
     currency: string;
     payable: boolean;
     alreadyPaid: boolean;
+    expired: boolean;
+    settlePending: boolean;
   } | null>;
   settleX402Order: (input: {
     orderId: string;
@@ -31,6 +34,8 @@ type X402PluginClient = {
     currency: string;
     payable: boolean;
     alreadyPaid: boolean;
+    expired: boolean;
+    settlePending: boolean;
   }>;
   failX402Order: (input: {
     orderId: string;
@@ -43,6 +48,8 @@ type X402PluginClient = {
     currency: string;
     payable: boolean;
     alreadyPaid: boolean;
+    expired: boolean;
+    settlePending: boolean;
   } | null>;
 };
 
@@ -86,5 +93,5 @@ export function setupX402PayRoute(app: Hono, plugins: PluginResult) {
   });
 
   app.route("/", payApp);
-  logger.info("[x402] Mounted POST /orders/:id/pay (USDC on Base)");
+  logger.info(`[x402] Mounted POST /orders/:id/pay (${getX402Network()})`);
 }

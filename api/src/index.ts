@@ -96,6 +96,7 @@ export default createPlugin({
     X402_ENABLED: z.string().optional(),
     X402_PAY_TO_ADDRESS: z.string().optional(),
     X402_FACILITATOR_URL: z.string().optional(),
+    X402_NETWORK: z.string().optional(),
     X402_HOST_SECRET: z.string().optional(),
   }),
 
@@ -244,6 +245,9 @@ export default createPlugin({
       }
       if (config.secrets.X402_FACILITATOR_URL) {
         process.env.X402_FACILITATOR_URL = config.secrets.X402_FACILITATOR_URL;
+      }
+      if (config.secrets.X402_NETWORK) {
+        process.env.X402_NETWORK = config.secrets.X402_NETWORK;
       }
       if (config.secrets.X402_HOST_SECRET) {
         process.env.X402_HOST_SECRET = config.secrets.X402_HOST_SECRET;

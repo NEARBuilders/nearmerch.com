@@ -359,6 +359,8 @@ export const X402PayOrderSchema = z.object({
   currency: z.string(),
   payable: z.boolean(),
   alreadyPaid: z.boolean(),
+  expired: z.boolean(),
+  settlePending: z.boolean(),
 });
 
 export const X402SettleInputSchema = z.object({

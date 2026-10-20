@@ -143,4 +143,5 @@ calculateTax: builder.calculateTax.handler(async ({ input }) =>
 });
 
 export { PrintfulService } from './service';
-export { PRINTFUL_PROVIDER_FIELDS, PrintfulProviderDetailsSchema, type PrintfulProviderDetails, type PrintfulProviderFields } from './types';
+export { PrintfulProviderDetailsSchema, type PrintfulProviderDetails } from './types';
+export { PRINTFUL_PROVIDER_FIELDS } from './fields';

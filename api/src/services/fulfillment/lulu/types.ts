@@ -33,13 +33,6 @@ export const LuluProviderDetailsSchema = z.object({
 
 export type LuluProviderDetails = z.infer<typeof LuluProviderDetailsSchema>;
 
-export const LULU_PROVIDER_FIELDS = {
-  pageCount: { label: 'Pages', order: 1 },
-  format: { label: 'Format', order: 2 },
-} as const;
-
-export type LuluProviderFields = typeof LULU_PROVIDER_FIELDS;
-
 export const LuluPrintJobStatusSchema = z.enum([
   'CREATED',
   'UNPAID',

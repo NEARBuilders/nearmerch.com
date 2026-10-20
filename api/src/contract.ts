@@ -770,19 +770,6 @@ export const contract = oc.router({
     .output(ProviderTestRunSchema)
     .errors({ UNAUTHORIZED }),
 
-  getProviderFieldConfigs: oc
-    .route({
-      method: "GET",
-      path: "/admin/providers/field-configs",
-      summary: "Get provider field configurations",
-      description:
-        "Returns field configurations for each fulfillment provider, used to display product details.",
-      tags: ["Admin", "Providers"],
-    })
-    .input(z.object({ provider: z.enum(['printful', 'lulu', 'manual']).optional() }))
-    .output(z.record(z.string(), z.any()))
-    .errors({ UNAUTHORIZED }),
-
   syncProducts: oc
     .route({
       method: "POST",

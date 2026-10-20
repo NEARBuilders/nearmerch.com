@@ -2218,26 +2218,6 @@ export default createPlugin({
           return exit.value;
         }),
 
-      getProviderFieldConfigs: builder.getProviderFieldConfigs
-        .use(requireAdmin)
-        .handler(async ({ input }) => {
-          const { PRINTFUL_PROVIDER_FIELDS } = await import('./services/fulfillment/printful');
-          const { LULU_PROVIDER_FIELDS } = await import('./services/fulfillment/lulu');
-          const { MANUAL_PROVIDER_FIELDS } = await import('./services/fulfillment/manual');
-
-          const allConfigs = {
-            printful: PRINTFUL_PROVIDER_FIELDS,
-            lulu: LULU_PROVIDER_FIELDS,
-            manual: MANUAL_PROVIDER_FIELDS,
-          };
-
-          if (input.provider) {
-            return { [input.provider]: allConfigs[input.provider as keyof typeof allConfigs] };
-          }
-
-          return allConfigs;
-        }),
-
       syncProducts: builder.syncProducts
         .use(requireAdmin)
         .handler(

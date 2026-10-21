@@ -77,6 +77,8 @@ X402_HOST_SECRET=replace-me
 
 `X402_HOST_SECRET` is a host-only shared secret for internal settle helpers. Buyers never send it.
 
+Cross-chain payments through NEAR Intents (`near-intents`) are not implemented yet. For the planned design, facilitator decision and go/no-go, see [ADR 0001](../docs/adr/0001-x402-near-intents-facilitator.md).
+
 ### curl
 
 Copy `providerBreakdown[].provider` → `selectedShipping.rateId` into `selectedRates`, and copy `shippingCost`, from the quote response.

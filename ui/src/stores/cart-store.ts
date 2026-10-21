@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { CartItem } from "@/integrations/api";
+import type { CartItemWithProduct } from "@/hooks/use-cart";
 
 const CART_STORAGE_KEY = "marketplace-cart";
 
@@ -40,7 +41,7 @@ export function buildCartItemId(variantId: string, referralAccountId?: string) {
     : `${variantId}::direct`;
 }
 
-export function getCartItemReactKey(item: Pick<CartItem, "id">): string {
+export function getCartItemReactKey(item: Pick<CartItemWithProduct, "id">): string {
   return item.id;
 }
 

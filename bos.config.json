@@ -60,13 +60,13 @@
     "ui": {
       "name": "ui",
       "development": "http://localhost:3002",
-      "production": "https://elliot-braem-9126-ui-nearmerch-com-nearbuilders-bc31b7fee-ze.zephyrcloud.app",
-      "ssr": "https://elliot-braem-9127-ui-nearmerch-com-nearbuilders-bcb1b1051-ze.zephyrcloud.app"
+      "production": "https://elliot-braem-9308-ui-nearmerch-com-nearbuilders-38590a321-ze.zephyrcloud.app",
+      "ssr": "https://elliot-braem-9309-ui-nearmerch-com-nearbuilders-10c57bd57-ze.zephyrcloud.app"
     },
     "api": {
       "name": "api",
       "development": "http://localhost:3014",
-      "production": "https://elliot-braem-9128-api-nearmerch-com-nearbuilders-7f64675bd-ze.zephyrcloud.app",
+      "production": "https://elliot-braem-9310-api-nearmerch-com-nearbuilders-10ff2ba18-ze.zephyrcloud.app",
       "proxy": "https://nearmerch.com",
       "variables": {
         "network": "mainnet",

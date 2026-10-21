@@ -89,4 +89,5 @@ export default createPlugin({
 });
 
 export { LuluService } from './service';
-export { LULU_PROVIDER_FIELDS, LuluProviderDetailsSchema, type LuluProviderDetails, type LuluProviderFields } from './types';
+export { LuluProviderDetailsSchema, type LuluProviderDetails } from './types';
+export { LULU_PROVIDER_FIELDS } from './fields';

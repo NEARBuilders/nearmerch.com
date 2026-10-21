@@ -26,7 +26,7 @@ export { useCollections, useSuspenseCollections, useCollection, useSuspenseColle
 
 export { useCategories, type Category, } from "./categories";
 
-export { useProviderFieldConfigs, type ProviderConfig, type PrintfulWebhookEventType, type ProviderFieldConfigs, } from "./providers";
+export { type ProviderConfig, type PrintfulWebhookEventType, } from "./providers";
 
 export { useSubscribeNewsletter, type SubscribeNewsletterOutput, } from "./newsletter";
 

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/utils/orpc';
 import type { ManualProviderSettings } from '../../../../api/src/schema';
 
@@ -52,18 +52,6 @@ export function useTestProvider() {
     mutationFn: async (params: { provider: ProviderName }) => {
       return await apiClient.testProvider(params);
     },
-  });
-}
-
-export type ProviderFieldConfigs = Awaited<ReturnType<typeof apiClient.getProviderFieldConfigs>>;
-
-export function useProviderFieldConfigs(provider?: ProviderName) {
-  return useQuery({
-    queryKey: [...providerKeys.all, 'field-configs', provider],
-    queryFn: async () => {
-      return await apiClient.getProviderFieldConfigs({ provider });
-    },
-    staleTime: Infinity,
   });
 }
 

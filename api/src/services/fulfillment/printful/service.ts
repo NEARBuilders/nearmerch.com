@@ -41,7 +41,7 @@ import {
   remapPrintfulPlacement,
   type CatalogPlacementData,
 } from './placements';
-import type { MockupStyleInfo } from './types';
+import type { MockupStyleInfo, PrintfulProviderDetails } from './types';
 import type { ProductWithImages, ProductVariantInput, Product, FulfillmentConfig } from '../../../schema';
 import type { SyncProgressEvent } from '../schema';
 import { generateProductId, generatePublicKey, generateSlug } from '../../../utils/product-ids';
@@ -1152,7 +1152,7 @@ export class PrintfulService {
 
     const images = Array.from(imageMap.values()).sort((a, b) => a.order - b.order);
 
-    const providerDetails: Record<string, unknown> = {};
+    const providerDetails: PrintfulProviderDetails = {};
     if (catalogProduct) {
       if (catalogProduct.brand) providerDetails.brand = catalogProduct.brand;
       if (catalogProduct.model) providerDetails.model = catalogProduct.model;
@@ -1192,7 +1192,7 @@ export class PrintfulService {
       assetId: undefined,
       metadata: {
         fees: [],
-        providerDetails,
+        providerDetails: { printful: providerDetails },
       },
     };
   }

@@ -107,8 +107,6 @@ export default createPlugin({
 
 export { ManualService } from './service';
 export {
-  MANUAL_PROVIDER_FIELDS,
   ManualProviderSettingsSchema,
   type ManualProviderSettings,
-  type ManualProviderFields,
 } from './types';

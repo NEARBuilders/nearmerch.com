@@ -12,6 +12,9 @@ import {
   ConfigureWebhookOutputSchema,
   CreateCheckoutInputSchema,
   CreateCheckoutOutputSchema,
+  X402PayOrderSchema,
+  X402SettleInputSchema,
+  X402FailInputSchema,
   ProductMetadataSchema,
   SubscribeNewsletterInputSchema,
   SubscribeNewsletterOutputSchema,
@@ -580,6 +583,45 @@ export const contract = oc.router({
     })
     .input(z.unknown())
     .output(WebhookResponseSchema),
+
+  getX402PayQuote: oc
+    .route({
+      method: "GET",
+      path: "/internal/x402/orders/{orderId}",
+      summary: "Get x402 pay quote for an order",
+      description:
+        "Host-only helper used by POST /orders/{id}/pay to resolve amount and payability.",
+      tags: ["x402"],
+    })
+    .input(z.object({ orderId: z.string() }))
+    .output(X402PayOrderSchema.nullable())
+    .errors({ UNAUTHORIZED }),
+
+  settleX402Order: oc
+    .route({
+      method: "POST",
+      path: "/internal/x402/orders/{orderId}/settle",
+      summary: "Mark an x402 order paid after facilitator settle",
+      description:
+        "Host-only helper invoked after a successful x402 facilitator settlement.",
+      tags: ["x402"],
+    })
+    .input(X402SettleInputSchema)
+    .output(X402PayOrderSchema)
+    .errors({ NOT_FOUND, BAD_REQUEST, UNAUTHORIZED }),
+
+  failX402Order: oc
+    .route({
+      method: "POST",
+      path: "/internal/x402/orders/{orderId}/fail",
+      summary: "Mark an x402 order payment_failed after settle failure",
+      description:
+        "Host-only helper invoked when x402 facilitator settlement fails.",
+      tags: ["x402"],
+    })
+    .input(X402FailInputSchema)
+    .output(X402PayOrderSchema.nullable())
+    .errors({ NOT_FOUND, UNAUTHORIZED }),
 
   updateProductListing: oc
     .route({

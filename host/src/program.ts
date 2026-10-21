@@ -29,6 +29,7 @@ import {
 } from "./services/federation.server";
 import { PluginsService } from "./services/plugins";
 import { createRouter } from "./services/router";
+import { setupX402PayRoute } from "./services/x402";
 import {
 	installSsrApiClientGlobal,
 	runWithSsrApiClient,
@@ -328,6 +329,7 @@ export const createStartServer = (onReady?: () => void) =>
 		};
 
 		setupApiRoutes(app, config, auth, db, apiRouter, loadingState);
+		setupX402PayRoute(app, plugins);
 
 		logger.info(`[Config] Host URL: ${config.hostUrl}`);
 		logger.info(`[Config] UI source: ${config.ui.source} → ${config.ui.url}`);

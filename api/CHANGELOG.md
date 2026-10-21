@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.14.0
+
+### Minor Changes
+
+- cff2a9e: Accept x402 USDC-on-Base payments so agents can settle merch orders without a hosted checkout.
+
+### Patch Changes
+
+- 2f05f5f: Fix the `/admin/orders/{orderId}/status` path param so the OpenAPI spec and `/api` docs generate again.
+- fffb99b: Match Printful shipment webhooks to NearMerch orders and stop showing "Processing" after an order has shipped.
+- 60c0874: Show the Product Details box to shoppers. Provider field configs now live in a shared module the UI imports directly (formatters run when rendering), the admin-only `/admin/providers/field-configs` route is removed, and Printful sync stores its details under `providerDetails.printful` so they are no longer stripped.
+
 ## 1.13.1
 
 ### Patch Changes

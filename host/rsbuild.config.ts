@@ -29,6 +29,42 @@ function updateBosConfig(url: string) {
   }
 }
 
+// Drizzle's unplugin load rule uses type: javascript/auto without a filter, so
+// Rspack otherwise parses bundled JSON (e.g. ajv schemas from @x402) as JS.
+function excludeJsonFromUnpluginLoad() {
+  return {
+    name: "exclude-json-from-unplugin-load",
+    apply(compiler: {
+      hooks: { afterEnvironment: { tap: (name: string, fn: () => void) => void } };
+      options: { module: { rules: Array<Record<string, unknown>> } };
+    }) {
+      compiler.hooks.afterEnvironment.tap("exclude-json-from-unplugin-load", () => {
+        for (const rule of compiler.options.module.rules) {
+          const rawUse = rule.use;
+          const uses = (
+            Array.isArray(rawUse) ? rawUse : rawUse ? [rawUse] : []
+          ) as Array<{ loader?: string }>;
+          const isUnpluginLoad = uses.some(
+            (use) =>
+              typeof use.loader === "string" &&
+              use.loader.includes("unplugin") &&
+              use.loader.includes("loaders/load"),
+          );
+          if (!isUnpluginLoad) continue;
+
+          const prevInclude = rule.include;
+          rule.include = (id: string) => {
+            if (id.endsWith(".json")) return false;
+            return typeof prevInclude === "function"
+              ? (prevInclude as (resource: string) => boolean)(id)
+              : true;
+          };
+        }
+      });
+    },
+  };
+}
+
 const plugins = [pluginReact()];
 
 if (shouldDeploy) {
@@ -74,12 +110,24 @@ export default defineConfig({
         /^bun:/,
         "@libsql/client",
       ],
+      ignoreWarnings: [
+        {
+          module: /@x402\/core/,
+          message:
+            /Critical dependency: require function is used in a way in which dependencies cannot be statically extracted/,
+        },
+        {
+          module: /resend/,
+          message: /Can't resolve '@react-email\/render'/,
+        },
+      ],
       infrastructureLogging: {
         level: "error",
       },
       stats: "errors-warnings",
       plugins: [
         DrizzleORMMigrations(),
+        excludeJsonFromUnpluginLoad(),
         new ModuleFederationPlugin({
           name: "host",
           filename: "remoteEntry.js",

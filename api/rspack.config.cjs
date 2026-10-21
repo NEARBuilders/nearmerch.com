@@ -26,7 +26,13 @@ function updateHostConfig(name, url) {
 
 const baseConfig = {
   externals: [
-    /^@libsql\/.*/, 
+    /^@libsql\/.*/,
+  ],
+  // Resend optionally imports this only for React email templates.
+  // We send text bodies, so the import never runs; keep it unbundled
+  // without pretending the package exists at runtime.
+  ignoreWarnings: [
+    { module: /resend/, message: /Can't resolve '@react-email\/render'/ },
   ],
   plugins: [new EveryPluginDevServer()],
   infrastructureLogging: {

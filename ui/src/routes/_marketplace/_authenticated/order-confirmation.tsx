@@ -558,36 +558,62 @@ function OrderConfirmationPage() {
               <h3 className="text-lg font-bold tracking-tight mb-4">What's Next?</h3>
 
               <div className="space-y-4">
-                <div className="flex gap-4">
-                  <div className="size-10 rounded-full bg-background/60 border border-border/60 flex items-center justify-center flex-shrink-0">
-                    <Package className="size-5 text-foreground/90 dark:text-muted-foreground" />
+                {order.status === 'shipped' || order.status === 'delivered' ? (
+                  <div className="flex gap-4">
+                    <div className="size-10 rounded-full bg-background/60 border border-border/60 flex items-center justify-center flex-shrink-0">
+                      <Truck className="size-5 text-foreground/90 dark:text-muted-foreground" />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-semibold mb-1 text-foreground">
+                        {order.status === 'delivered' ? 'Order delivered' : 'Your order is on the way'}
+                      </h4>
+                      <p className="text-sm text-foreground/90 dark:text-muted-foreground leading-5">
+                        {order?.trackingInfo?.some((item) => item.trackingUrl)
+                          ? 'Use the tracking link above to follow your shipment.'
+                          : order?.deliveryEstimate
+                            ? `Expected delivery: ${new Date(
+                                order.deliveryEstimate.minDeliveryDate
+                              ).toLocaleDateString()} - ${new Date(
+                                order.deliveryEstimate.maxDeliveryDate
+                              ).toLocaleDateString()}`
+                            : 'Your fulfillment partner has dispatched this order.'}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-base font-semibold mb-1 text-foreground">Processing Your Order</h4>
-                    <p className="text-sm text-foreground/90 dark:text-muted-foreground leading-5">
-                      We're preparing your items for shipment. This typically
-                      takes 1-2 business days.
-                    </p>
-                  </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="flex gap-4">
+                      <div className="size-10 rounded-full bg-background/60 border border-border/60 flex items-center justify-center flex-shrink-0">
+                        <Package className="size-5 text-foreground/90 dark:text-muted-foreground" />
+                      </div>
+                      <div>
+                        <h4 className="text-base font-semibold mb-1 text-foreground">Processing Your Order</h4>
+                        <p className="text-sm text-foreground/90 dark:text-muted-foreground leading-5">
+                          We're preparing your items for shipment. This typically
+                          takes 1-2 business days.
+                        </p>
+                      </div>
+                    </div>
 
-                <div className="flex gap-4">
-                  <div className="size-10 rounded-full bg-background/60 border border-border/60 flex items-center justify-center flex-shrink-0">
-                    <Truck className="size-5 text-foreground/90 dark:text-muted-foreground" />
-                  </div>
-                  <div>
-                    <h4 className="text-base font-semibold mb-1 text-foreground">Shipping & Delivery</h4>
-                    <p className="text-sm text-foreground/90 dark:text-muted-foreground leading-5">
-                      {order?.deliveryEstimate
-                        ? `Expected delivery: ${new Date(
-                            order.deliveryEstimate.minDeliveryDate
-                          ).toLocaleDateString()} - ${new Date(
-                            order.deliveryEstimate.maxDeliveryDate
-                          ).toLocaleDateString()}`
-                        : "You'll receive tracking information once your order ships."}
-                    </p>
-                  </div>
-                </div>
+                    <div className="flex gap-4">
+                      <div className="size-10 rounded-full bg-background/60 border border-border/60 flex items-center justify-center flex-shrink-0">
+                        <Truck className="size-5 text-foreground/90 dark:text-muted-foreground" />
+                      </div>
+                      <div>
+                        <h4 className="text-base font-semibold mb-1 text-foreground">Shipping & Delivery</h4>
+                        <p className="text-sm text-foreground/90 dark:text-muted-foreground leading-5">
+                          {order?.deliveryEstimate
+                            ? `Expected delivery: ${new Date(
+                                order.deliveryEstimate.minDeliveryDate
+                              ).toLocaleDateString()} - ${new Date(
+                                order.deliveryEstimate.maxDeliveryDate
+                              ).toLocaleDateString()}`
+                            : "You'll receive tracking information once your order ships."}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>

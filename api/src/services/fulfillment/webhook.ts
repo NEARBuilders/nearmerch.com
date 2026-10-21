@@ -19,6 +19,27 @@ export function findOrderByFulfillmentRefEffect(externalId: string) {
   });
 }
 
+export function findPrintfulWebhookOrderEffect(identifiers: {
+  externalId?: string;
+  printfulOrderId?: string;
+}) {
+  return Effect.gen(function* () {
+    const store = yield* OrderStore;
+    const { externalId, printfulOrderId } = identifiers;
+
+    if (externalId) {
+      const byRef = yield* findOrderByFulfillmentRefEffect(externalId);
+      if (byRef) return byRef;
+    }
+
+    if (printfulOrderId) {
+      return yield* store.findByProviderOrderId(printfulOrderId);
+    }
+
+    return null;
+  });
+}
+
 export function processPrintfulWebhookEffect(options: {
   runtime: MarketplaceRuntime;
   order: OrderWithItems;

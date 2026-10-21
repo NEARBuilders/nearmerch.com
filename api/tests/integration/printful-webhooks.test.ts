@@ -794,6 +794,139 @@ describe('Printful Webhook Integration', () => {
       expect(updated.order.status).toBe('shipped');
       expect(updated.order.trackingInfo?.[0]?.trackingUrl).toContain('usps.com');
     });
+
+    it('should update order to shipped when package_shipped webhook received', async () => {
+      const client = await getPluginClient({ nearAccountId: TEST_USER });
+      const db = getTestDb();
+      const orderId = 'test-order-package-shipped-123';
+      const now = new Date();
+
+      await db.insert(schema.orders).values({
+        id: orderId,
+        userId: TEST_USER,
+        status: 'processing',
+        totalAmount: 5000,
+        currency: 'USD',
+        fulfillmentReferenceId: 'o-package-shipped-ref',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const payload = {
+        type: 'package_shipped',
+        created: Math.floor(Date.now() / 1000),
+        retries: 0,
+        store: 11229252,
+        data: {
+          shipment: {
+            tracking_number: '1Z999AA10123456784',
+            tracking_url: 'https://www.ups.com/track?tracknum=1Z999AA10123456784',
+            carrier: 'UPS',
+          },
+          order: {
+            id: 94188299,
+            external_id: orderId,
+            status: 'fulfilled',
+          },
+        },
+      };
+
+      const webhookClient = await createSignedPrintfulWebhookClient(payload);
+      const result = await webhookClient.printfulWebhook(payload);
+      expect(result.received).toBe(true);
+
+      const updated = await client.getOrder({ id: orderId });
+      expect(updated.order.status).toBe('shipped');
+      expect(updated.order.trackingInfo?.[0]?.trackingCode).toBe('1Z999AA10123456784');
+    });
+
+    it('should resolve order from shipment.order_external_id when data.order is missing', async () => {
+      const client = await getPluginClient({ nearAccountId: TEST_USER });
+      const db = getTestDb();
+      const orderId = 'test-order-nested-external-id-123';
+      const fulfillmentReferenceId = 'o-nested-external-ref';
+      const now = new Date();
+
+      await db.insert(schema.orders).values({
+        id: orderId,
+        userId: TEST_USER,
+        status: 'processing',
+        totalAmount: 5000,
+        currency: 'USD',
+        fulfillmentReferenceId,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const payload = {
+        type: 'shipment_sent',
+        created: Math.floor(Date.now() / 1000),
+        retries: 0,
+        store: 11229252,
+        data: {
+          shipment: {
+            order_id: 94188299,
+            order_external_id: fulfillmentReferenceId,
+            tracking_number: '9400111899562537866450',
+            tracking_url: 'https://tools.usps.com/go/TrackConfirmAction?tLabels=9400111899562537866450',
+            service: 'First-Class Mail',
+          },
+        },
+      };
+
+      const webhookClient = await createSignedPrintfulWebhookClient(payload);
+      const result = await webhookClient.printfulWebhook(payload);
+      expect(result.received).toBe(true);
+
+      const updated = await client.getOrder({ id: orderId });
+      expect(updated.order.status).toBe('shipped');
+      expect(updated.order.trackingInfo?.[0]?.trackingCode).toBe('9400111899562537866450');
+    });
+
+    it('should resolve order by Printful draft order id when external_id is missing', async () => {
+      const client = await getPluginClient({ nearAccountId: TEST_USER });
+      const db = getTestDb();
+      const orderId = 'test-order-printful-draft-id-123';
+      const now = new Date();
+
+      await db.insert(schema.orders).values({
+        id: orderId,
+        userId: TEST_USER,
+        status: 'processing',
+        totalAmount: 5000,
+        currency: 'USD',
+        draftOrderIds: { printful: '94188299' },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const payload = {
+        type: 'package_shipped',
+        created: Math.floor(Date.now() / 1000),
+        retries: 0,
+        store: 11229252,
+        data: {
+          shipment: {
+            tracking_number: '1Z999AA10123456784',
+            tracking_url: 'https://www.ups.com/track?tracknum=1Z999AA10123456784',
+            carrier: 'UPS',
+          },
+          order: {
+            id: 94188299,
+            store: 11229252,
+            status: 'fulfilled',
+          },
+        },
+      };
+
+      const webhookClient = await createSignedPrintfulWebhookClient(payload);
+      const result = await webhookClient.printfulWebhook(payload);
+      expect(result.received).toBe(true);
+
+      const updated = await client.getOrder({ id: orderId });
+      expect(updated.order.status).toBe('shipped');
+      expect(updated.order.trackingInfo?.[0]?.trackingCode).toBe('1Z999AA10123456784');
+    });
   });
 
   describe('order_updated', () => {

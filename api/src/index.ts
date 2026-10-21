@@ -48,7 +48,7 @@ import { processManualWebhookEffect } from './services/webhooks/manual';
 import { verifyManualWebhookSignature } from './services/webhooks/manual-auth';
 import { logWebhookProcessingError, readWebhookBody } from './services/webhooks/common/route';
 import { runProviderTestStepEffect, saveProviderTestScenarioEffect } from './services/provider-tests';
-import { findOrderByFulfillmentRefEffect, processLuluWebhookEffect, processPrintfulWebhookEffect } from './services/fulfillment/webhook';
+import { findOrderByFulfillmentRefEffect, findPrintfulWebhookOrderEffect, processLuluWebhookEffect, processPrintfulWebhookEffect } from './services/fulfillment/webhook';
 import { isProviderOrderAlreadyGone } from './utils/provider-order-cancel';
 export * from './schema';
 export {
@@ -1590,7 +1590,7 @@ export default createPlugin({
               });
             }
 
-            const { eventType, externalId, catalogProductId, data } =
+            const { eventType, externalId, printfulOrderId, catalogProductId, data } =
               parsePrintfulWebhook(rawBody);
 
             if (eventType === 'catalog_price_changed' && catalogProductId) {
@@ -1617,19 +1617,26 @@ export default createPlugin({
               return { received: true };
             }
 
-            if (!externalId) {
+            if (!externalId && !printfulOrderId) {
+              console.warn(
+                `[Printful Webhook] Missing order identifiers for event: ${eventType}`,
+              );
               return { received: true };
             }
 
             console.log(
-              `[Printful Webhook] Processing event: ${eventType}, external_id: ${externalId}`,
+              `[Printful Webhook] Processing event: ${eventType}, external_id: ${externalId ?? 'none'}, printful_order_id: ${printfulOrderId ?? 'none'}`,
             );
 
             const order = await managedRuntime.runPromise(
-              findOrderByFulfillmentRefEffect(externalId),
+              findPrintfulWebhookOrderEffect({ externalId, printfulOrderId }),
             );
 
             if (!order) {
+              console.warn(
+                `[Printful Webhook] No matching order for event: ${eventType}`,
+                { externalId, printfulOrderId },
+              );
               return { received: true };
             }
 
@@ -1640,7 +1647,7 @@ export default createPlugin({
                 eventType,
                 data,
                 actor: 'service:printful',
-                metadata: { eventType, externalId, data },
+                metadata: { eventType, externalId, printfulOrderId, data },
               }),
             );
           } catch (error) {

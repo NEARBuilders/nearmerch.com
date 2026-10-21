@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.18.3
+
+### Patch Changes
+
+- 05ec49d: Return a 404 with the branded not-found page for unknown collection and product URLs instead of a 500 error screen or a soft 404 (fixes #243).
+- 06a1181: Improve orders table with clickable product links and copyable order IDs (fixes #228).
+- fffb99b: Match Printful shipment webhooks to NearMerch orders and stop showing "Processing" after an order has shipped.
+- 60c0874: Show the Product Details box to shoppers. Provider field configs now live in a shared module the UI imports directly (formatters run when rendering), the admin-only `/admin/providers/field-configs` route is removed, and Printful sync stores its details under `providerDetails.printful` so they are no longer stripped.
+- d5dfad0: Fix quick-add crashing the page for products without size/color options (fixes #231).
+- a962610: Document x402 USDC-on-Base agent checkout in the Terms of Service and API integration guide.
+
 ## 1.18.2
 
 ### Patch Changes

@@ -35,7 +35,7 @@ Visit <http://localhost:3000> to see the application.
 ## Documentation
 
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Contribution guidelines and development workflow
-- **[API README](./api/README.md)** - API plugin documentation
+- **[API README](./api/README.md)** - API plugin documentation, including the [x402 agent payment flow](./api/README.md#agent-payments-x402)
 - **[UI README](./ui/README.md)** - Frontend documentation
 
 ## Architecture

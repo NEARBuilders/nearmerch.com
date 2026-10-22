@@ -29,6 +29,7 @@ import {
 } from "./services/federation.server";
 import { PluginsService } from "./services/plugins";
 import { createRouter } from "./services/router";
+import { setupSkillRoute } from "./services/skill";
 import { setupX402PayRoute } from "./services/x402";
 import {
 	installSsrApiClientGlobal,
@@ -309,6 +310,7 @@ export const createStartServer = (onReady?: () => void) =>
 		);
 
 		app.get("/health", (c: Context) => c.text("OK"));
+		setupSkillRoute(app);
 
 		const apiRouter = createRouter(plugins);
 

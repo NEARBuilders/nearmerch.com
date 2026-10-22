@@ -125,6 +125,7 @@ Skip changesets for docs-only changes, internal refactors, or test-only updates.
 | `api/LLM.txt` | Deep plugin implementation reference | Working inside the API plugin |
 | `ui/README.md` | Frontend guide | Working on routes and UI |
 | `host/README.md` | Host server guide | Working on host orchestration |
+| `skills/nearmerch/SKILL.md` | Public agent skill, served at `https://nearmerch.com/skill.md` | Changing any agent-facing API, auth or payment behavior (update it in the same PR) |
 
 ## Git Workflow
 

@@ -1,6 +1,6 @@
 # ADR 0001: x402 near-intents facilitator and integration seam
 
-- **Status:** Accepted (decision: wait). Implementation is **no-go** until the preconditions in [Go/no-go](#gono-go) hold.
+- **Status:** Accepted (decision: wait). Implementation is **no-go** until the preconditions in [Go/no-go](#gono-go) hold. The fee approach in [Royalties / affiliate FeeConfigs](#royalties--affiliate-feeconfigs) is **Proposed, pending confirmation**.
 - **Date:** 2026-10-22
 - **Issue:** [#237](https://github.com/NEARBuilders/nearmerch.com/issues/237), part of epic [#234](https://github.com/NEARBuilders/nearmerch.com/issues/234). Unblocks [#238](https://github.com/NEARBuilders/nearmerch.com/issues/238) once the go/no-go flips.
 - **Scope:** Research only. No product code changes.
@@ -74,7 +74,7 @@ There is **no** npm mechanism package for near-intents (`@x402/near-intents` ret
 
 1. **Facilitator: wait.** Do not self-host. The preferred candidate is the fastnear (mikedotexe) facilitator, once it advertises `near-intents` against the merged spec. We will accept any facilitator that meets the [capability checklist](#gono-go). The URL is configured separately from the standard `X402_FACILITATOR_URL`.
 2. **Integration seam:** as defined below, on the existing `POST /orders/{id}/pay` resource, reusing the Phase 1 order creation and `processPaymentSuccessEffect`.
-3. **Flag gating:** everything is behind `X402_INTENTS_ENABLED`, default **off**. With the flag off, behaviour is byte-identical to Phase 1.
+3. **Flag gating:** everything is behind `X402_INTENTS_ENABLED`, default **off**. See [Flag gating](#flag-gating) for what "off" must guarantee.
 4. **Go/no-go for #238: NO-GO** today. See preconditions.
 
 ## Integration seam
@@ -163,7 +163,7 @@ We call the intents facilitator's `/verify` with **our own** unquoted entry, bui
       "network": "eip155:42161",
       "asset": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
       "amount": "32662500",                         // VerifyResponse.extra.amountIn
-      "payTo": "0x76b4c56085ED136a8744D52bE956396624a730E8", // 1Click deposit address
+      "payTo": "<DEPOSIT_ADDRESS>",                 // 1Click deposit address (illustrative)
       "maxTimeoutSeconds": 600,                     // unchanged
       "extra": {
         "assetTransferMethod": "near-intents",
@@ -171,7 +171,7 @@ We call the intents facilitator's `/verify` with **our own** unquoted entry, bui
         "indicativeAmount": "32540000",
         "destination": { /* unchanged */ },
         "refundDeadline": "2026-10-22T10:10:00Z",
-        "operationToken": "k1.1790244600.<mac>"
+        "operationToken": "k1.1792750200.<mac>"
       }
     }
   ]
@@ -187,8 +187,8 @@ The client picks the entry carrying `extra.operationToken`, deposits `amount` to
   "accepted": { /* the UNQUOTED entry from the first 402 */ },
   "payload": {
     "type": "deposit",
-    "operationToken": "k1.1790244600.<mac>",
-    "depositAddress": "0x76b4c56085ED136a8744D52bE956396624a730E8",
+    "operationToken": "k1.1792750200.<mac>",
+    "depositAddress": "<DEPOSIT_ADDRESS>",
     "txHash": "0x9bcf..."
   }
 }
@@ -216,13 +216,15 @@ Client retry UX, to be documented in the `api/README.md` agent guide once implem
 
 ### Royalties / affiliate FeeConfigs
 
+> **Status: Proposed, pending confirmation.** This approach changes epic decision 5 and needs maintainer sign-off. The rest of this ADR is Accepted.
+
 Epic decision 5 is that FeeConfigs are preserved on the intents path via the [1Click fee config](https://docs.near-intents.org/integration/distribution-channels/1click-api/fee-config), the doc linked from the referral tooltip in `ui/src/routes/_marketplace/products/$productId.tsx`. Research shows three blockers to doing that literally:
 
 1. **The spec gives the facilitator, not the merchant, control of `appFees`/`referral`.** It "sets them from its own configuration at quote time". There is no wire field for per-order fee recipients.
 2. **1Click caps the combined fee at 500 bps (5%)**, including 1Click's own share. nearmerch referral fees default to 2000 bps (`ReferralConfigSchema`), and creator `fees` can add more. Most fee'd products cannot be expressed as `appFees`.
 3. **Semantics differ.** nearmerch FeeConfigs are a share *of the price* ("Price includes X% creator fees"). Under `EXACT_OUTPUT`, `appFees` are *added on the input side* and increase the buyer's deposit.
 
-Decision for the seam: the store receives the full order total on Base, as on the standard x402 path. FeeConfigs are reconciled **out of band** from `paymentDetails.referral` and product `fees`, the same treatment epic decision 5 already gives standard x402. Carrying fees via 1Click `appFees` is an open question for #238. It needs either a facilitator that accepts merchant-supplied `appFees`, or a spec extension, and only works for fee totals under the 1Click cap.
+Proposed approach for the seam: the store receives the full order total on Base, as on the standard x402 path. FeeConfigs are reconciled **out of band** from `paymentDetails.referral` and product `fees`, the same treatment epic decision 5 already gives standard x402. Carrying fees via 1Click `appFees` is an open question for #238. It needs either a facilitator that accepts merchant-supplied `appFees`, or a spec extension, and only works for fee totals under the 1Click cap.
 
 ### Idempotency and storage
 
@@ -240,7 +242,7 @@ Decision for the seam: the store receives the full order total on Base, as on th
 | `X402_INTENTS_FACILITATOR_API_KEY` | proposed, if the chosen facilitator needs one (fastnear does) | Secret, add to `bos.config.json` secrets like the other `X402_*` vars. |
 | `X402_INTENTS_ORIGINS` | proposed | Offered origin network/asset pairs. |
 
-With `X402_INTENTS_ENABLED` off, the 402 body, settle path and order transitions must be identical to Phase 1. The #238 acceptance criteria already include this, and it should be pinned by a test. Intents entries are also suppressed when `X402_NETWORK` is not Base mainnet.
+With `X402_INTENTS_ENABLED` off, the 402 body, settle path and order transitions must be byte-identical to Phase 1. The #238 acceptance criteria already include this, and it should be pinned by a test. Intents entries are also suppressed when `X402_NETWORK` is not Base mainnet.
 
 ## Open risks and questions
 

@@ -1,7 +1,7 @@
 ---
 name: nearmerch
 description: Browse the NEAR Merch Store catalog, quote shipping, create orders, and pay for them over the nearmerch.com HTTP API, either with x402 (USDC on Base) or a hosted PingPay checkout. Use this when an agent needs to find NEAR merch, buy it for a shipping address, or check an order's status.
-compatibility: Needs HTTPS access to nearmerch.com. Signing in needs a NEAR account with a full-access key. x402 payments need an EVM wallet holding USDC on Base mainnet.
+compatibility: Needs HTTPS access to nearmerch.com. Signing in needs a NEAR account with a full-access key. x402 payments need an EVM wallet holding USDC on the Base network named in the 402 challenge (Base Sepolia until the mainnet launch).
 metadata:
   version: "0.1.0"
   homepage: "https://nearmerch.com"
@@ -195,7 +195,16 @@ Each call creates a new order. Don't retry a successful checkout. Reuse the `ord
 
 ## 5a. Pay with x402 (USDC on Base)
 
-The store speaks **x402 v2**, `exact` scheme on **Base mainnet** (`eip155:8453`), asset **USDC** `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` (EIP-712 domain `USD Coin`, version `2`, `eip3009` transfer). Use `@x402/fetch` v2. The v1 `x402-fetch` package won't work.
+The store speaks **x402 v2**, `exact` scheme, USDC on Base with an `eip3009` transfer. Use `@x402/fetch` v2. The v1 `x402-fetch` package won't work.
+
+The network is a server setting. Read `network`, `asset` and `extra` from the 402 challenge, never hard-code them, and fund the wallet on the network it names. Production runs on Base Sepolia (test USDC) until the Base mainnet launch:
+
+| Network | `network` | USDC `asset` | EIP-712 domain in `extra` |
+|---------|-----------|--------------|---------------------------|
+| Base Sepolia (now) | `eip155:84532` | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` | `USDC`, version `2` |
+| Base mainnet (after launch) | `eip155:8453` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `USD Coin`, version `2` |
+
+`client.register("eip155:*", ...)` in the example below handles either network.
 
 - `POST https://nearmerch.com/orders/{orderId}/pay` with no payment header returns **`402`**. The `PAYMENT-REQUIRED` response header (base64 JSON) lists `accepts` with `scheme`, `network`, `asset`, `amount`, `payTo` and `extra`.
 - `amount` is USDC atomic units (6 decimals): `round(totalAmount * 100) * 10000`. So `28.81` becomes `"28810000"`.
@@ -248,7 +257,7 @@ Use `"paymentProvider": "pingpay"` when a human will pay. Open the `checkoutUrl`
 | `GET /api/orders/by-session/{sessionId}` | Returns `{ order }` or `{ order: null }`. |
 | `GET /api/orders/status/subscribe/{sessionId}` | Server-sent events `{ status, trackingInfo, updatedAt }` until a terminal status. |
 
-Useful `order` fields: `id`, `status`, `totalAmount`, `subtotal`, `shippingCost`, `taxAmount`, `currency`, `checkoutProvider` (`x402` | `pingpay` | `stripe`), `items[]`, `shippingAddress`, `trackingInfo[]` (`trackingCode`, `trackingUrl`, `shipmentMethodName`), `createdAt`, `updatedAt`.
+Useful `order` fields: `id`, `status`, `totalAmount`, `subtotal`, `shippingCost`, `taxAmount`, `currency`, `checkoutProvider` (`x402` | `pingpay` | `stripe` | `near`), `items[]`, `shippingAddress`, `trackingInfo[]` (`trackingCode`, `trackingUrl`, `shipmentMethodName`), `createdAt`, `updatedAt`.
 
 Order statuses:
 

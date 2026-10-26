@@ -55,6 +55,11 @@ export {
   DEFAULT_SITE_SETTINGS,
 } from "./site-settings";
 
+export {
+  X402IntentsOperationStore,
+  X402IntentsOperationStoreLive,
+} from "./x402-intents";
+
 export type {
   ProductCriteria,
   ProductWithImages,

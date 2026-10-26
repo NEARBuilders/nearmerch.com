@@ -19,7 +19,12 @@ import type { CreateOrderItem } from "./fulfillment/schema";
 import type { PaymentLineItem } from "./payment/schema";
 import { CheckoutError } from "./checkout/errors";
 import { getProvidersAddressRequirementError } from "./checkout/provider-address-requirements";
-import { getX402PayToAddress, isX402Enabled } from "./payment/x402";
+import { aggregateCheckoutFees } from "./checkout/fees";
+import {
+  getX402PayToAddress,
+  isX402Enabled,
+  isX402IntentsEnabled,
+} from "./payment/x402";
 
 
 interface ProviderItemGroup {
@@ -966,6 +971,15 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
                         items: referralFeeDetails,
                       }
                     : undefined,
+                // Splits for the near-intents path (#238); omitted when it is off
+                // so Phase 1 orders keep the same paymentDetails shape.
+                fees: isX402IntentsEnabled()
+                  ? aggregateCheckoutFees({
+                      itemFees: allItems.map((pi) => pi.metadata?.fees),
+                      referralFees: referralFeeDetails,
+                      totalAmount,
+                    })
+                  : undefined,
                 createdAt: new Date().toISOString(),
               });
 
@@ -1031,60 +1045,11 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
 
             let fees: FeeConfig[] | undefined;
             if (providerName === "pingpay") {
-              const itemsWithFees = allItems.filter(
-                (pi) => pi.metadata?.fees && pi.metadata.fees.length > 0,
-              );
-              const feeMap = new Map<string, FeeConfig>();
-
-              const upsertFee = (fee: FeeConfig) => {
-                const key = `${fee.recipient}:${fee.type}:${fee.label}`;
-                const existing = feeMap.get(key);
-
-                if (existing) {
-                  feeMap.set(key, {
-                    ...existing,
-                    bps: existing.bps + fee.bps,
-                  });
-                  return;
-                }
-
-                feeMap.set(key, fee);
-              };
-
-              if (itemsWithFees.length > 0) {
-                for (const pi of itemsWithFees) {
-                  for (const fee of pi.metadata!.fees) {
-                    upsertFee(fee);
-                  }
-                }
-              }
-
-              const referralFeeAmountByRecipient = new Map<string, number>();
-              for (const referralFee of referralFeeDetails) {
-                referralFeeAmountByRecipient.set(
-                  referralFee.recipient,
-                  (referralFeeAmountByRecipient.get(referralFee.recipient) ?? 0) +
-                    referralFee.feeAmount,
-                );
-              }
-
-              for (const [recipient, feeAmount] of referralFeeAmountByRecipient.entries()) {
-                const effectiveBps =
-                  totalAmount > 0 ? Math.round((feeAmount / totalAmount) * 10000) : 0;
-
-                if (effectiveBps <= 0) {
-                  continue;
-                }
-
-                upsertFee({
-                  type: "affiliate",
-                  label: "Referral",
-                  recipient,
-                  bps: effectiveBps,
-                });
-              }
-
-              fees = Array.from(feeMap.values());
+              fees = aggregateCheckoutFees({
+                itemFees: allItems.map((pi) => pi.metadata?.fees),
+                referralFees: referralFeeDetails,
+                totalAmount,
+              });
             }
 
             const paymentRequest = {

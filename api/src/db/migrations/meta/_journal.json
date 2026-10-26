@@ -120,6 +120,13 @@
       "when": 1791299675592,
       "tag": "0016_add_site_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792980255585,
+      "tag": "0017_add_x402_intents_operations",
+      "breakpoints": true
     }
   ]
 }

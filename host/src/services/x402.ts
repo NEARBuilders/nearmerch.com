@@ -6,8 +6,14 @@ import {
   getX402Network,
   getX402PayToAddress,
   isX402Enabled,
+  getX402IntentsInactiveReason,
+  isX402IntentsEnabled,
   X402_HOST_SECRET_HEADER,
 } from "../../../api/src/services/payment/x402/config.ts";
+import {
+  createX402IntentsPayDeps,
+  type X402IntentsPluginClient,
+} from "../../../api/src/services/payment/x402/intents/host-deps.ts";
 import type { PluginResult } from "./plugins";
 import { logger } from "../utils/logger";
 
@@ -51,7 +57,7 @@ type X402PluginClient = {
     expired: boolean;
     settlePending: boolean;
   } | null>;
-};
+} & X402IntentsPluginClient;
 
 export function setupX402PayRoute(app: Hono, plugins: PluginResult) {
   if (!isX402Enabled()) {
@@ -82,6 +88,10 @@ export function setupX402PayRoute(app: Hono, plugins: PluginResult) {
   const reqHeaders = new Headers();
   reqHeaders.set(X402_HOST_SECRET_HEADER, hostSecret);
   const client = pluginApi.createClient({ reqHeaders });
+  const intents = createX402IntentsPayDeps(client) ?? undefined;
+  if (!intents && isX402IntentsEnabled()) {
+    logger.warn(`[x402] near-intents disabled: ${getX402IntentsInactiveReason()}`);
+  }
   const payApp = createX402PayApp({
     payTo,
     facilitatorUrl: getX402FacilitatorUrl(),
@@ -90,8 +100,13 @@ export function setupX402PayRoute(app: Hono, plugins: PluginResult) {
       client.settleX402Order({ orderId, ...settlement }),
     failOrder: (orderId, settlement) =>
       client.failX402Order({ orderId, ...settlement }),
+    intents,
   });
 
   app.route("/", payApp);
-  logger.info(`[x402] Mounted POST /orders/:id/pay (${getX402Network()})`);
+  logger.info(
+    `[x402] Mounted POST /orders/:id/pay (${getX402Network()}${
+      intents ? `, near-intents: ${intents.origins.length} origin(s)` : ""
+    })`,
+  );
 }

@@ -20,6 +20,13 @@ export {
   getX402UsdcAddress,
   getX402UsdcExtra,
   isX402Enabled,
+  getX402IntentsFacilitatorApiKey,
+  getX402IntentsFacilitatorUrl,
+  getX402IntentsFeeMode,
+  getX402IntentsInactiveReason,
+  getX402IntentsOrigins,
+  isX402IntentsActive,
+  isX402IntentsEnabled,
   x402HostSecretMatches,
   X402_HOST_SECRET_HEADER,
 } from "./config";
@@ -36,3 +43,5 @@ export {
   toX402PayOrder,
 } from "./settlement";
 export { createX402PayApp, type X402PayAppDeps, type X402PayOrder } from "./pay-app";
+export { createX402IntentsHttpFacilitator } from "./intents/facilitator";
+export type { X402IntentsPayDeps } from "./intents/types";

@@ -77,7 +77,39 @@ X402_HOST_SECRET=replace-me
 
 `X402_HOST_SECRET` is a host-only shared secret for internal settle helpers. Buyers never send it.
 
-Cross-chain payments through NEAR Intents (`near-intents`) are not implemented yet. For the planned design, facilitator decision and go/no-go, see [ADR 0001](../docs/adr/0001-x402-near-intents-facilitator.md).
+### Paying from another chain (`near-intents`, issue #238)
+
+When `X402_INTENTS_ENABLED=true` and the intents config is complete, the unpaid 402 also lists one entry per configured origin (e.g. USDC on Arbitrum) with `extra.assetTransferMethod: "near-intents"`, `amount: ""` and `payTo: ""`. The merchant still receives USDC on Base (`extra.destination`). The flow follows the upfront near-intents scheme ([x402 #3370](https://github.com/x402-foundation/x402/pull/3370)):
+
+1. **Quote.** Retry with a `PAYMENT-SIGNATURE` whose `accepted` is the unquoted entry and `payload` is `{"type":"quote","refundTo":"<your address on the origin chain>"}`. You get a second 402 whose single entry has `payTo` = deposit address, `amount` = `amountIn`, and `extra.refundDeadline` / `extra.operationToken` (and `extra.depositMemo` when set). Nothing changes on the order.
+2. **Deposit.** Send exactly `amount` of the origin asset to `payTo` (with the memo, if any) before `refundDeadline`.
+3. **Settle.** Retry with `accepted` = the quoted entry and `payload` = `{"type":"deposit","operationToken","depositAddress","depositMemo"?,"txHash"}`.
+
+Responses to the deposit request:
+
+| Result | HTTP | What to do |
+| --- | --- | --- |
+| Paid | 200 + `PAYMENT-RESPONSE` (Base tx, `extra.originTxHash`) | Done. |
+| `settlement_pending` | 402 + `PAYMENT-RESPONSE` | Retry the **same** deposit payload later. It stays valid until `refundDeadline` + 24 h, even past the 900 s quote window. Do not request a new quote; new quotes are refused while one is pending. |
+| `exact_near_intents_payment_failed` | 402 + `PAYMENT-RESPONSE` (`extra.status: "REFUNDED"`, `extra.refundTo`) | The swap failed and funds were refunded on the origin chain. The order is `payment_failed`; start a new checkout. |
+| `invalid_exact_near_intents_*` (e.g. `deposit_not_found`) | 402 | Nothing changed. Fix the payload (or wait for the deposit to land) and retry. |
+| Replay of a settled operation | 200, `idempotent: true`, `reason: exact_near_intents_operation_executed` | Already paid; the order is not paid or fulfilled twice. |
+
+Only fund one quote per order. A second funded quote is still delivered to the merchant and recorded as a duplicate for a manual refund.
+
+Fee splits (royalty, affiliate, referral) are recorded on the order. With `X402_INTENTS_FEE_MODE=app_fees` they are passed to the facilitator as 1Click `appFees` (bps of `amountIn`, NEAR account recipients, max 500 bps total) and `extra.destination.amount` is reduced by the same amounts; otherwise (`out_of_band`, default) the merchant receives the full total and splits are reconciled off-chain as in Phase 1. Only use `app_fees` with a facilitator that applies merchant-supplied `extra.appFees`: spec #3370 lets the facilitator set fees from its own configuration, and a facilitator that ignores them would pay the merchant the reduced amount with nothing sent to the fee recipients.
+
+Environment (Base mainnet only; there is no near-intents testnet):
+
+```
+X402_INTENTS_ENABLED=true
+X402_INTENTS_FACILITATOR_URL=https://intents-facilitator.example
+X402_INTENTS_FACILITATOR_API_KEY=optional
+X402_INTENTS_ORIGINS=[{"network":"eip155:42161","asset":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831","decimals":6,"maxTimeoutSeconds":300,"usdPegged":true}]
+X402_INTENTS_FEE_MODE=out_of_band
+```
+
+With the flag off (default) the 402 and the Phase 1 flow are unchanged. Design and facilitator decision: [ADR 0001](../docs/adr/0001-x402-near-intents-facilitator.md).
 
 ### curl
 

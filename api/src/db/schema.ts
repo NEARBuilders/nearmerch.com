@@ -475,3 +475,44 @@ export const newsletterSubscriptions = pgTable(
     index("newsletter_active_idx").on(table.active),
   ],
 );
+
+/**
+ * x402 near-intents operations (issue #238). One row per facilitator quote,
+ * keyed network:depositAddress[:memo]. Kept for at least refundDeadline + 24 h
+ * so a retried deposit settles with the recorded entry and facilitator, and a
+ * replayed executed operation is answered from the record. The operationToken
+ * is never stored.
+ */
+export const x402IntentsOperations = pgTable(
+  "x402_intents_operations",
+  {
+    operationKey: text("operation_key").primaryKey(),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    originNetwork: text("origin_network").notNull(),
+    originAsset: text("origin_asset").notNull(),
+    depositAddress: text("deposit_address").notNull(),
+    depositMemo: text("deposit_memo"),
+    facilitatorUrl: text("facilitator_url").notNull(),
+    requirements: jsonb("requirements").$type<Record<string, unknown>>().notNull(),
+    feePlan: jsonb("fee_plan").$type<Record<string, unknown>>().notNull(),
+    refundDeadline: timestamp("refund_deadline", { withTimezone: true, mode: "date" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    state: text("state").notNull().default("quoted"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "date" }),
+    settleResponse: jsonb("settle_response").$type<Record<string, unknown>>(),
+    lastErrorReason: text("last_error_reason"),
+    duplicate: boolean("duplicate").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("x402_intents_operations_order_idx").on(table.orderId),
+    index("x402_intents_operations_state_idx").on(table.state),
+  ],
+);

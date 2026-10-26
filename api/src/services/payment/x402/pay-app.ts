@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { FacilitatorClient } from "@x402/core/server";
 import type { OrderStatus } from "../../../schema";
 import {
@@ -19,7 +19,12 @@ import {
   X402_PAY_PATH_PATTERN,
   X402_SCHEME,
 } from "./constants";
+import { createX402IntentsMiddleware } from "./intents/middleware";
+import type { X402IntentsPayDeps } from "./intents/types";
 import { isNonTerminalX402SettleFailure } from "./settlement";
+
+const X402_PAY_DESCRIPTION = "Pay for an existing merch order (USDC on Base)";
+const X402_PAY_MIME_TYPE = "application/json";
 
 export type X402PayOrder = {
   id: string;
@@ -46,6 +51,8 @@ export type X402PayAppDeps = {
     settlement: { errorReason?: string; errorMessage?: string },
   ) => Promise<X402PayOrder | null>;
   syncFacilitatorOnStart?: boolean;
+  /** Phase 2 near-intents upfront path (#238). Omit to serve Phase 1 only. */
+  intents?: X402IntentsPayDeps;
 };
 
 function orderIdFromTransport(transportContext: unknown): string | undefined {
@@ -111,8 +118,8 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
 
   const routes = {
     [X402_PAY_PATH_PATTERN]: {
-      description: "Pay for an existing merch order (USDC on Base)",
-      mimeType: "application/json",
+      description: X402_PAY_DESCRIPTION,
+      mimeType: X402_PAY_MIME_TYPE,
       accepts: {
         scheme: X402_SCHEME,
         network,
@@ -169,18 +176,8 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
 
   const app = new Hono();
 
-  app.use(
-    "/orders/:id/pay",
-    paymentMiddlewareFromHTTPServer(
-      httpServer,
-      undefined,
-      undefined,
-      deps.syncFacilitatorOnStart ?? true,
-    ),
-  );
-
-  app.post("/orders/:id/pay", async (c) => {
-    const order = await deps.getOrder(c.req.param("id"));
+  const paidResponse = async (c: Context, orderId: string) => {
+    const order = await deps.getOrder(orderId);
     if (!order) {
       return c.json({ error: "Order not found" }, 404);
     }
@@ -205,7 +202,37 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
       status: order.status,
       currency: order.currency,
     });
-  });
+  };
+
+  if (deps.intents) {
+    // Runs before Phase 1: handles near-intents payloads itself and adds the
+    // intents entries to Phase 1's unpaid 402. Without it, Phase 1 is unchanged.
+    app.use(
+      "/orders/:id/pay",
+      createX402IntentsMiddleware({
+        deps: deps.intents,
+        payTo: deps.payTo,
+        resource: (c) => ({
+          url: c.req.url,
+          description: X402_PAY_DESCRIPTION,
+          mimeType: X402_PAY_MIME_TYPE,
+        }),
+        paidResponse,
+      }),
+    );
+  }
+
+  app.use(
+    "/orders/:id/pay",
+    paymentMiddlewareFromHTTPServer(
+      httpServer,
+      undefined,
+      undefined,
+      deps.syncFacilitatorOnStart ?? true,
+    ),
+  );
+
+  app.post("/orders/:id/pay", (c) => paidResponse(c, c.req.param("id")));
 
   return app;
 }

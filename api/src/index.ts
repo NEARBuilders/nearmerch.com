@@ -31,7 +31,7 @@ import { StripeService } from './services/stripe';
 import { NewsletterService, NewsletterServiceLive } from './services/newsletter';
 import { MerchBoxService, MerchBoxServiceLive } from './services/merch-box';
 import { MerchBoxStoreLive } from './store/merch-box';
-import { DatabaseLive, OrderStore, OrderStoreLive, ProductStore, ProductStoreLive, ProductTypeStore, ProductTypeStoreLive, CollectionStoreLive, AssetStoreLive, ProviderTestStateStore, ProviderTestStateStoreLive, SiteSettingsStore, SiteSettingsStoreLive, DEFAULT_SITE_SETTINGS } from './store';
+import { DatabaseLive, OrderStore, OrderStoreLive, ProductStore, ProductStoreLive, ProductTypeStore, ProductTypeStoreLive, CollectionStoreLive, AssetStoreLive, ProviderTestStateStore, ProviderTestStateStoreLive, SiteSettingsStore, SiteSettingsStoreLive, DEFAULT_SITE_SETTINGS, X402IntentsOperationStore, X402IntentsOperationStoreLive } from './store';
 import { NewsletterStoreLive } from './store/newsletter';
 import { ProviderConfigStore, ProviderConfigStoreLive } from './store/providers';
 import { parsePrintfulWebhook, verifyPrintfulWebhookSignature } from './services/fulfillment/printful/webhook';
@@ -44,6 +44,13 @@ import {
   toX402PayOrder,
   x402HostSecretMatches,
 } from './services/payment/x402';
+import {
+  failX402IntentsOperationEffect,
+  getX402IntentsOrderContextEffect,
+  recordX402IntentsQuoteEffect,
+  settleX402IntentsOperationEffect,
+  X402IntentsOperationError,
+} from './services/payment/x402/intents/operations';
 import { processManualWebhookEffect } from './services/webhooks/manual';
 import { verifyManualWebhookSignature } from './services/webhooks/manual-auth';
 import { logWebhookProcessingError, readWebhookBody } from './services/webhooks/common/route';
@@ -98,6 +105,11 @@ export default createPlugin({
     X402_FACILITATOR_URL: z.string().optional(),
     X402_NETWORK: z.string().optional(),
     X402_HOST_SECRET: z.string().optional(),
+    X402_INTENTS_ENABLED: z.string().optional(),
+    X402_INTENTS_FACILITATOR_URL: z.string().optional(),
+    X402_INTENTS_FACILITATOR_API_KEY: z.string().optional(),
+    X402_INTENTS_ORIGINS: z.string().optional(),
+    X402_INTENTS_FEE_MODE: z.string().optional(),
   }),
 
   context: z.object({
@@ -208,6 +220,7 @@ export default createPlugin({
           AssetStoreLive,
           MerchBoxStoreLive,
           SiteSettingsStoreLive,
+          X402IntentsOperationStoreLive,
         ),
         dbLayer,
       );
@@ -251,6 +264,22 @@ export default createPlugin({
       }
       if (config.secrets.X402_HOST_SECRET) {
         process.env.X402_HOST_SECRET = config.secrets.X402_HOST_SECRET;
+      }
+      if (config.secrets.X402_INTENTS_ENABLED) {
+        process.env.X402_INTENTS_ENABLED = config.secrets.X402_INTENTS_ENABLED;
+      }
+      if (config.secrets.X402_INTENTS_FACILITATOR_URL) {
+        process.env.X402_INTENTS_FACILITATOR_URL = config.secrets.X402_INTENTS_FACILITATOR_URL;
+      }
+      if (config.secrets.X402_INTENTS_FACILITATOR_API_KEY) {
+        process.env.X402_INTENTS_FACILITATOR_API_KEY =
+          config.secrets.X402_INTENTS_FACILITATOR_API_KEY;
+      }
+      if (config.secrets.X402_INTENTS_ORIGINS) {
+        process.env.X402_INTENTS_ORIGINS = config.secrets.X402_INTENTS_ORIGINS;
+      }
+      if (config.secrets.X402_INTENTS_FEE_MODE) {
+        process.env.X402_INTENTS_FEE_MODE = config.secrets.X402_INTENTS_FEE_MODE;
       }
 
       console.log("[Marketplace] Plugin initialized");
@@ -322,6 +351,33 @@ export default createPlugin({
         },
       });
     });
+
+    const assertX402HostSecret = (reqHeaders?: Headers) => {
+      if (!x402HostSecretMatches(reqHeaders)) {
+        throw new ORPCError("UNAUTHORIZED", {
+          message: "Invalid or missing x402 host secret",
+        });
+      }
+    };
+
+    const runX402IntentsEffect = async <A,>(
+      effect: Effect.Effect<A, Error, ManagedRuntime.ManagedRuntime.Context<typeof managedRuntime>>,
+    ): Promise<A> => {
+      const exit = await managedRuntime.runPromiseExit(effect);
+      if (Exit.isSuccess(exit)) {
+        return exit.value;
+      }
+      const error = Cause.squash(exit.cause);
+      if (error instanceof ORPCError) {
+        throw error;
+      }
+      if (error instanceof X402IntentsOperationError) {
+        throw new ORPCError(error.code, { message: error.message });
+      }
+      throw new ORPCError("INTERNAL_SERVER_ERROR", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    };
 
     const getPurchaseGatePluginId = (
       metadata: ProductMetadata | undefined,
@@ -1965,6 +2021,46 @@ export default createPlugin({
 
         return exit.value;
       }),
+
+      getX402IntentsOrder: builder.getX402IntentsOrder.handler(async ({ input, context }) => {
+        assertX402HostSecret(context.reqHeaders);
+        return runX402IntentsEffect(getX402IntentsOrderContextEffect(input.orderId));
+      }),
+
+      recordX402IntentsQuote: builder.recordX402IntentsQuote.handler(async ({ input, context }) => {
+        assertX402HostSecret(context.reqHeaders);
+        return runX402IntentsEffect(recordX402IntentsQuoteEffect(input));
+      }),
+
+      getX402IntentsOperation: builder.getX402IntentsOperation.handler(
+        async ({ input, context }) => {
+          assertX402HostSecret(context.reqHeaders);
+          return runX402IntentsEffect(
+            Effect.flatMap(X402IntentsOperationStore, (store) => store.find(input.operationKey)),
+          );
+        },
+      ),
+
+      settleX402IntentsOperation: builder.settleX402IntentsOperation.handler(
+        async ({ input, context }) => {
+          assertX402HostSecret(context.reqHeaders);
+          return runX402IntentsEffect(
+            settleX402IntentsOperationEffect({
+              runtime,
+              operationKey: input.operationKey,
+              settlement: input.settlement,
+              settleResponse: input.settleResponse,
+            }),
+          );
+        },
+      ),
+
+      failX402IntentsOperation: builder.failX402IntentsOperation.handler(
+        async ({ input, context }) => {
+          assertX402HostSecret(context.reqHeaders);
+          return runX402IntentsEffect(failX402IntentsOperationEffect(input));
+        },
+      ),
 
       cleanupAbandonedDrafts: builder.cleanupAbandonedDrafts.handler(
         async ({ input, context }) => {

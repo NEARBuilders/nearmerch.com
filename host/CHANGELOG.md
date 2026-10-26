@@ -1,5 +1,11 @@
 # host
 
+## 1.0.4
+
+### Patch Changes
+
+- 1b2f839: Serve the agent skill guide at `/skill.md` (`text/markdown`) from `skills/nearmerch/SKILL.md`, so agents can learn how to browse, quote, check out and pay (x402 or PingPay) on nearmerch.com.
+
 ## 1.0.3
 
 ### Patch Changes

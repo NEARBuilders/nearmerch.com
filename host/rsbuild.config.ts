@@ -105,6 +105,13 @@ export default defineConfig({
         uniqueName: "host",
         library: { type: "commonjs-module" },
       },
+      module: {
+        rules: [
+          // Embed skills/nearmerch/SKILL.md?raw as a string for GET /skill.md.
+          // Rsbuild only handles ?raw for JS, CSS, JSON and asset files.
+          { test: /\.md$/, resourceQuery: /raw/, type: "asset/source" },
+        ],
+      },
       externals: [
         /^node:/,
         /^bun:/,

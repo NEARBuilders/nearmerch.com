@@ -1,5 +1,5 @@
 ---
-"api": patch
+"api": minor
 "host": patch
 ---
 

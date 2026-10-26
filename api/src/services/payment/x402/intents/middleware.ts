@@ -516,25 +516,33 @@ export function createX402IntentsMiddleware(
       return paymentRequired(c, { error: "invalid_payload", accepts: [] });
     }
 
-    const context = await deps.getOrderContext(orderId);
-    if (!context) return abort(c, "order_not_found");
+    try {
+      const context = await deps.getOrderContext(orderId);
+      if (!context) return abort(c, "order_not_found");
 
-    const origin = deps.origins.find((candidate) =>
-      originMatches(candidate, payload.accepted.network, payload.accepted.asset),
-    );
-    const type = (payload.payload as { type?: unknown } | undefined)?.type;
+      const origin = deps.origins.find((candidate) =>
+        originMatches(candidate, payload.accepted.network, payload.accepted.asset),
+      );
+      const type = (payload.payload as { type?: unknown } | undefined)?.type;
 
-    if (type === "quote") {
-      if (!origin) {
-        return paymentRequired(c, { error: "invalid_network", accepts: [] });
+      if (type === "quote") {
+        if (!origin) {
+          return paymentRequired(c, { error: "invalid_network", accepts: [] });
+        }
+        return await handleQuote(c, orderId, payload, origin, context);
       }
-      return handleQuote(c, orderId, payload, origin, context);
-    }
 
-    if (type === "deposit") {
-      return handleDeposit(c, orderId, payload, origin, context);
-    }
+      if (type === "deposit") {
+        return await handleDeposit(c, orderId, payload, origin, context);
+      }
 
-    return paymentRequired(c, { error: "invalid_payload", accepts: [] });
+      return paymentRequired(c, { error: "invalid_payload", accepts: [] });
+    } catch (error) {
+      // A host API call (order, operation record) failed. Nothing is
+      // committed on our side that a retry cannot redo: the facilitator returns
+      // its recorded result and the operation is settled or failed then.
+      console.error("[x402-intents] host API call failed", error);
+      return abort(c, "intents_unavailable", 502);
+    }
   };
 }

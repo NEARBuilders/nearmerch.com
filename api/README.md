@@ -97,7 +97,7 @@ Responses to the deposit request:
 
 Only fund one quote per order. A second funded quote is still delivered to the merchant and recorded as a duplicate for a manual refund.
 
-Fee splits (royalty, affiliate, referral) are recorded on the order. With `X402_INTENTS_FEE_MODE=app_fees` they are passed to the facilitator as 1Click `appFees` (bps of `amountIn`, NEAR account recipients, max 500 bps total) and `extra.destination.amount` is reduced by the same amounts; otherwise (`out_of_band`, default) the merchant receives the full total and splits are reconciled off-chain as in Phase 1.
+Fee splits (royalty, affiliate, referral) are recorded on the order. With `X402_INTENTS_FEE_MODE=app_fees` they are passed to the facilitator as 1Click `appFees` (bps of `amountIn`, NEAR account recipients, max 500 bps total) and `extra.destination.amount` is reduced by the same amounts; otherwise (`out_of_band`, default) the merchant receives the full total and splits are reconciled off-chain as in Phase 1. Only use `app_fees` with a facilitator that applies merchant-supplied `extra.appFees`: spec #3370 lets the facilitator set fees from its own configuration, and a facilitator that ignores them would pay the merchant the reduced amount with nothing sent to the fee recipients.
 
 Environment (Base mainnet only; there is no near-intents testnet):
 

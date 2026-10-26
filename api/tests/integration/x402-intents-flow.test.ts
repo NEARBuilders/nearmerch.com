@@ -284,7 +284,9 @@ async function hostClient() {
   return getPluginClient({ reqHeaders });
 }
 
-async function createApp(options: { now?: () => number } = {}) {
+async function createApp(
+  options: { now?: () => number; overrides?: Partial<X402IntentsPayDeps> } = {},
+) {
   const oneClick = new MockOneClick();
   const facilitator = new MockIntentsFacilitator(oneClick);
   const client = await hostClient();
@@ -292,7 +294,7 @@ async function createApp(options: { now?: () => number } = {}) {
     fetch: ((input: string, init?: RequestInit) => facilitator.fetch(input, init)) as typeof fetch,
   });
   const intents: X402IntentsPayDeps | undefined = deps
-    ? { ...deps, ...(options.now ? { now: options.now } : {}) }
+    ? { ...deps, ...(options.now ? { now: options.now } : {}), ...options.overrides }
     : undefined;
   const app = createX402PayApp({
     payTo: PAY_TO,
@@ -841,6 +843,65 @@ describe('x402 near-intents flow (#238)', () => {
       const details = (await client.getOrder({ id: orderId })).order.paymentDetails as Record<string, any> | null;
       expect(details?.fees).toBeUndefined();
     });
+  });
+
+  it('a failed host API call after a successful swap returns 502 without state change, and the retry settles once', async () => {
+    let failSettle = true;
+    let settleOperation: X402IntentsPayDeps['settleOperation'] | undefined;
+    const { app, oneClick, intents } = await createApp({
+      overrides: {
+        settleOperation: async (input) => {
+          if (failSettle) {
+            failSettle = false;
+            throw new Error('api unavailable');
+          }
+          return settleOperation!(input);
+        },
+      },
+    });
+    const real = createX402IntentsPayDeps((await hostClient()) as never)!;
+    settleOperation = real.settleOperation;
+    expect(intents).toBeDefined();
+
+    const { client, orderId } = await createOrder();
+    const { quoted } = await quoteFlow(app, orderId);
+    oneClick.deposit(quoted.payTo, txHash(10), 'SUCCESS');
+
+    const first = await pay(app, orderId, depositHeader(orderId, quoted, txHash(10)));
+    expect(first.status).toBe(502);
+    expect(await first.json()).toEqual({ error: 'intents_unavailable' });
+    expect((await client.getOrder({ id: orderId })).order.status).toBe('payment_pending');
+
+    const retry = await pay(app, orderId, depositHeader(orderId, quoted, txHash(10)));
+    expect(retry.status).toBe(200);
+    expect(PAID).toContain((await client.getOrder({ id: orderId })).order.status);
+    expect(await auditCount(orderId, 'payment.success')).toBe(1);
+    expect(await auditCount(orderId, 'fulfillment:confirmed')).toBe(1);
+    const [operation] = await operationsFor(orderId);
+    expect(operation!.state).toBe('executed');
+    expect(operation!.duplicate).toBe(false);
+  });
+
+  it('an order lookup failure on an intents payload returns 502 and changes nothing', async () => {
+    const { app } = await createApp();
+    const { client, orderId } = await createOrder();
+    const { unquoted } = await quoteFlow(app, orderId);
+    const { app: broken } = await createApp({
+      overrides: {
+        getOrderContext: async () => {
+          throw new Error('api unavailable');
+        },
+      },
+    });
+
+    const response = await pay(
+      broken,
+      orderId,
+      signature(orderId, unquoted, { type: 'quote', refundTo: REFUND_TO }),
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: 'intents_unavailable' });
+    expect((await client.getOrder({ id: orderId })).order.status).toBe('payment_pending');
   });
 
   it('rejects a deposit for another order\'s operation and an unknown origin', async () => {

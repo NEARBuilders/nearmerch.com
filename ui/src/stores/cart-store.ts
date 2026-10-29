@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { CartItem } from "@/integrations/api";
 import type { CartItemWithProduct } from "@/hooks/use-cart";
 
-const CART_STORAGE_KEY = "marketplace-cart";
+export const CART_STORAGE_KEY = "marketplace-cart";
 
 /**
  * Cart store state interface
@@ -136,3 +136,11 @@ export const useCartStore = create<CartState>()(
     }
   )
 );
+
+/** Clear in-memory cart and remove the persisted localStorage entry (e.g. on logout). */
+export function clearPersistedCart() {
+  useCartStore.setState({ items: {} });
+  if (typeof window !== "undefined") {
+    localStorage.removeItem(CART_STORAGE_KEY);
+  }
+}

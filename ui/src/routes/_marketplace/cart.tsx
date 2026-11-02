@@ -22,7 +22,8 @@ export const Route = createFileRoute("/_marketplace/cart")({
 });
 
 function CartPage() {
-  const { cartItems, subtotal, updateQuantity, removeItem } = useCart();
+  const { cartItems, subtotal, updateQuantity, removeItem, isCartLoading } =
+    useCart();
   const { nearPrice, isLoading: isLoadingNearPrice } = useNearPrice();
   const nearAmount = (subtotal / nearPrice).toFixed(2);
   const nearAccountId = useNearAccountId();
@@ -69,7 +70,24 @@ function CartPage() {
           </div>
         </div>
 
-        {cartItems.length === 0 ? (
+        {isCartLoading ? (
+          <div
+            className="rounded-2xl bg-background border border-border/60 px-6 md:px-8 lg:px-10 py-6 md:py-8 space-y-4"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="sr-only">Loading your cart…</span>
+            {[0, 1].map((i) => (
+              <div key={i} className="flex gap-4 animate-pulse" aria-hidden="true">
+                <div className="size-24 rounded-xl bg-muted shrink-0" />
+                <div className="flex-1 space-y-3 py-2">
+                  <div className="h-4 w-2/3 rounded bg-muted" />
+                  <div className="h-4 w-1/3 rounded bg-muted" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : cartItems.length === 0 ? (
           <div className="rounded-2xl bg-background border border-border/60 px-6 md:px-8 lg:px-10 py-12 md:py-16 text-center">
             <p className="text-foreground/90 dark:text-muted-foreground text-lg mb-6 font-medium">
               Your cart is empty

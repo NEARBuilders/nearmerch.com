@@ -70,6 +70,11 @@ export function useCart() {
     });
   }, [missingProductIds, items, isLoading, removeItem]);
 
+  // True while saved cart items exist but their product data hasn't loaded yet,
+  // so the UI can show a loading state instead of flashing "Your cart is empty".
+  const isCartLoading =
+    isLoading && Object.keys(items).length > 0 && cartItems.length === 0;
+
   // Memoize computed values
   const totalCount = useMemo(
     () => cartItems.reduce((sum, item) => sum + item.quantity, 0),
@@ -91,6 +96,7 @@ export function useCart() {
     totalCount,
     subtotal,
     isLoading,
+    isCartLoading,
     addToCart,
     updateQuantity,
     removeItem,

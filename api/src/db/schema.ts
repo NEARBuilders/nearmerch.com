@@ -7,6 +7,7 @@ import {
   timestamp,
   boolean,
   jsonb,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type {
   Attribute,
@@ -349,6 +350,30 @@ export const orderAuditLogs = pgTable(
     index("audit_actor_idx").on(table.actor),
     index("audit_action_idx").on(table.action),
     index("audit_created_idx").on(table.createdAt),
+  ],
+);
+
+export const paymentWebhookEvents = pgTable(
+  "payment_webhook_events",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull(),
+    eventId: text("event_id").notNull(),
+    orderId: text("order_id").references(() => orders.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("processing"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("payment_webhook_events_order_idx").on(table.orderId),
+    index("payment_webhook_events_status_idx").on(table.status),
+    uniqueIndex("payment_webhook_events_provider_event_idx").on(table.provider, table.eventId),
   ],
 );
 

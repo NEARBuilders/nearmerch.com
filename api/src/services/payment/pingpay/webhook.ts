@@ -1,4 +1,5 @@
 import { Effect, Schedule } from 'every-plugin/effect';
+import { createHash } from 'node:crypto';
 import { ORPCError } from 'every-plugin/orpc';
 import type { MarketplaceRuntime, PaymentProvider } from '../../../runtime';
 import type { OrderStatus } from '../../../schema';
@@ -42,7 +43,8 @@ export function handlePingPayWebhookEffect(options: {
     });
 
     const eventType = webhookResult.eventType;
-    const { orderId, sessionId } = webhookResult;
+    const { eventId, orderId, sessionId } = webhookResult;
+    const paymentEventId = eventId ?? createHash('sha256').update(body).digest('hex');
 
     const store = yield* OrderStore;
 
@@ -80,12 +82,41 @@ export function handlePingPayWebhookEffect(options: {
           return { received: true } as const;
         }
 
-        const result = yield* processPaymentSuccessEffect({
-          runtime,
-          order,
+        const claim = yield* store.claimPaymentWebhook({
+          orderId: order.id,
+          provider: 'pingpay',
+          eventId: paymentEventId,
           actor: 'service:pingpay',
           metadata: { sessionId, eventType },
         });
+
+        if (!claim.claimed) {
+          return { received: true } as const;
+        }
+
+        const processResult = yield* processPaymentSuccessEffect({
+          runtime,
+          order: claim.order,
+          actor: 'service:pingpay',
+          metadata: { sessionId, eventType },
+          paymentAlreadyClaimed: true,
+        }).pipe(Effect.either);
+
+        if (processResult._tag === 'Left') {
+          const error = processResult.left;
+          yield* store.failPaymentWebhook('pingpay', paymentEventId, error);
+          yield* store.updateStatus(
+            order.id,
+            'paid_pending_fulfillment',
+            'service:pingpay',
+            'fulfillment:failed',
+            { error: error instanceof Error ? error.message : String(error) },
+          );
+          return yield* Effect.fail(error);
+        }
+
+        const result = processResult.right;
+        yield* store.completePaymentWebhook('pingpay', paymentEventId);
         console.log('[PingPay Webhook] Updated final status', { orderId: order.id, finalStatus: result.order.status, allSuccess: result.allProviderConfirmationsSucceeded });
         break;
       }

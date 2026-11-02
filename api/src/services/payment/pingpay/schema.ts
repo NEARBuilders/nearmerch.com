@@ -1,6 +1,7 @@
 import { z } from 'every-plugin/zod';
 
 export const PingWebhookPayloadSchema = z.object({
+  id: z.string().optional(),
   type: z.enum(['payment.success', 'payment.failed', 'checkout.session.completed']),
   sessionId: z.string().optional(),
   metadata: z.object({
@@ -22,6 +23,7 @@ export const PingWebhookPayloadSchema = z.object({
 export type PingWebhookPayload = z.infer<typeof PingWebhookPayloadSchema>;
 
 export const PingWebhookResultSchema = z.object({
+  eventId: z.string().optional(),
   eventType: z.string(),
   orderId: z.string().optional(),
   sessionId: z.string().optional(),

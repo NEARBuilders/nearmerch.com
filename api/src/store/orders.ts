@@ -1,4 +1,4 @@
-import { and, desc, eq, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "every-plugin/effect";
 import { customAlphabet } from "nanoid";
 import * as schema from "../db/schema";
@@ -9,6 +9,10 @@ const makeFulfillmentReferenceId = customAlphabet(
   "0123456789abcdefghijklmnopqrstuvwxyz",
   15
 );
+
+export type PaymentWebhookClaim =
+  | { claimed: true; order: OrderWithItems }
+  | { claimed: false; reason: "duplicate_event" | "order_already_claimed" };
 
 export class OrderStore extends Context.Tag("OrderStore")<
   OrderStore,
@@ -27,6 +31,9 @@ export class OrderStore extends Context.Tag("OrderStore")<
     readonly updatePaymentDetails: (orderId: string, paymentDetails: Record<string, unknown>) => Effect.Effect<OrderWithItems, Error>;
     readonly updateStatus: (orderId: string, status: OrderStatus, actor?: string, reason?: string, metadata?: Record<string, unknown>) => Effect.Effect<OrderWithItems, Error>;
     readonly claimStatus: (orderId: string, fromStatus: OrderStatus, toStatus: OrderStatus, actor?: string, reason?: string, metadata?: Record<string, unknown>) => Effect.Effect<OrderWithItems | null, Error>;
+    readonly claimPaymentWebhook: (input: { orderId: string; provider: string; eventId: string; actor: string; metadata?: Record<string, unknown> }) => Effect.Effect<PaymentWebhookClaim, Error>;
+    readonly completePaymentWebhook: (provider: string, eventId: string) => Effect.Effect<void, Error>;
+    readonly failPaymentWebhook: (provider: string, eventId: string, error: unknown) => Effect.Effect<void, Error>;
     readonly updateShipping: (orderId: string, shippingAddress: ShippingAddress) => Effect.Effect<OrderWithItems, Error>;
     readonly updateFulfillment: (orderId: string, fulfillmentOrderId: string, actor?: string) => Effect.Effect<OrderWithItems, Error>;
     readonly updateTracking: (orderId: string, trackingInfo: TrackingInfo[], actor?: string, metadata?: Record<string, unknown>) => Effect.Effect<OrderWithItems, Error>;
@@ -542,6 +549,123 @@ export const OrderStoreLive = Layer.effect(
             return order;
           },
           catch: (error) => new Error(`Failed to claim order status: ${error}`),
+        }),
+
+      claimPaymentWebhook: ({ orderId, provider, eventId, actor, metadata }) =>
+        Effect.tryPromise({
+          try: async () => {
+            const result = await db.transaction(async (tx) => {
+              const inserted = await tx
+                .insert(schema.paymentWebhookEvents)
+                .values({
+                  id: crypto.randomUUID(),
+                  provider,
+                  eventId,
+                  orderId,
+                  status: "processing",
+                  metadata: metadata || {},
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .onConflictDoNothing({
+                  target: [schema.paymentWebhookEvents.provider, schema.paymentWebhookEvents.eventId],
+                })
+                .returning({ id: schema.paymentWebhookEvents.id });
+
+              if (inserted.length === 0) {
+                return { claimed: false as const, reason: "duplicate_event" as const };
+              }
+
+              const current = await tx
+                .select({ status: schema.orders.status })
+                .from(schema.orders)
+                .where(and(
+                  eq(schema.orders.id, orderId),
+                  inArray(schema.orders.status, ["draft_created", "pending", "payment_pending"]),
+                  eq(schema.orders.isDeleted, false),
+                ))
+                .limit(1);
+
+              const claimed = await tx
+                .update(schema.orders)
+                .set({
+                  status: "paid_pending_fulfillment",
+                  updatedAt: new Date(),
+                })
+                .where(and(
+                  eq(schema.orders.id, orderId),
+                  inArray(schema.orders.status, ["draft_created", "pending", "payment_pending"]),
+                  eq(schema.orders.isDeleted, false),
+                ))
+                .returning({ id: schema.orders.id });
+
+              if (claimed.length === 0) {
+                await tx
+                  .update(schema.paymentWebhookEvents)
+                  .set({ status: "ignored", updatedAt: new Date() })
+                  .where(eq(schema.paymentWebhookEvents.id, inserted[0]!.id));
+                return { claimed: false as const, reason: "order_already_claimed" as const };
+              }
+
+              const auditMetadata = { ...(metadata || {}), reason: "payment.success" };
+              await tx.insert(schema.orderAuditLogs).values({
+                id: crypto.randomUUID(),
+                orderId,
+                actor,
+                action: "status_change",
+                field: "status",
+                oldValue: current[0]!.status,
+                newValue: "paid_pending_fulfillment",
+                metadata: auditMetadata,
+                createdAt: new Date(),
+              });
+
+              return { claimed: true as const, orderId };
+            });
+
+            if (!result.claimed) {
+              return result;
+            }
+
+            const order = await findOrderById(result.orderId);
+            if (!order) {
+              throw new Error("Order not found after payment webhook claim");
+            }
+            return { claimed: true as const, order };
+          },
+          catch: (error) => new Error(`Failed to claim payment webhook: ${error}`),
+        }),
+
+      completePaymentWebhook: (provider, eventId) =>
+        Effect.tryPromise({
+          try: async () => {
+            await db
+              .update(schema.paymentWebhookEvents)
+              .set({ status: "completed", updatedAt: new Date() })
+              .where(and(
+                eq(schema.paymentWebhookEvents.provider, provider),
+                eq(schema.paymentWebhookEvents.eventId, eventId),
+              ));
+          },
+          catch: (error) => new Error(`Failed to complete payment webhook: ${error}`),
+        }),
+
+      failPaymentWebhook: (provider, eventId, error) =>
+        Effect.tryPromise({
+          try: async () => {
+            await db
+              .update(schema.paymentWebhookEvents)
+              .set({
+                status: "failed",
+                error: error instanceof Error ? error.message : String(error),
+                updatedAt: new Date(),
+              })
+              .where(and(
+                eq(schema.paymentWebhookEvents.provider, provider),
+                eq(schema.paymentWebhookEvents.eventId, eventId),
+              ));
+          },
+          catch: (error) => new Error(`Failed to record payment webhook failure: ${error}`),
         }),
 
       updateShipping: (orderId, shippingAddress) =>

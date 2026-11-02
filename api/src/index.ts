@@ -1529,23 +1529,54 @@ export default createPlugin({
             return { received: true };
           }
 
-          if (order.status !== "draft_created" && order.status !== "pending") {
+          if (order.status !== "draft_created" && order.status !== "pending" && order.status !== "payment_pending") {
             return { received: true };
           }
 
+          let paymentClaimed = false;
           try {
+            const claim = await managedRuntime.runPromise(
+              Effect.gen(function* () {
+                const store = yield* OrderStore;
+                return yield* store.claimPaymentWebhook({
+                  orderId,
+                  provider: "stripe",
+                  eventId: event.id,
+                  actor: "service:stripe",
+                  metadata: { sessionId: session.id, eventType: "checkout.session.completed" },
+                });
+              }),
+            );
+
+            if (!claim.claimed) {
+              return { received: true };
+            }
+            paymentClaimed = true;
+
             const paidResult = await managedRuntime.runPromise(
               processPaymentSuccessEffect({
                 runtime,
-                order,
+                order: claim.order,
                 actor: 'service:stripe',
                 metadata: { sessionId: session.id, eventType: 'checkout.session.completed' },
+                paymentAlreadyClaimed: true,
               }),
             );
-          } catch (error) {
+
             await managedRuntime.runPromise(
               Effect.gen(function* () {
                 const store = yield* OrderStore;
+                yield* store.completePaymentWebhook("stripe", event.id);
+              }),
+            );
+          } catch (error) {
+            if (!paymentClaimed) {
+              throw error;
+            }
+            await managedRuntime.runPromise(
+              Effect.gen(function* () {
+                const store = yield* OrderStore;
+                yield* store.failPaymentWebhook("stripe", event.id, error);
                 yield* store.updateStatus(
                   orderId,
                   "paid_pending_fulfillment",

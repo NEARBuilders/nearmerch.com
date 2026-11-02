@@ -40,6 +40,7 @@ export const WebhookInputSchema = z.object({
 
 export const WebhookOutputSchema = z.object({
   received: z.boolean(),
+  eventId: z.string().optional(),
   eventType: z.string().optional(),
   orderId: z.string().optional(),
   sessionId: z.string().optional(),

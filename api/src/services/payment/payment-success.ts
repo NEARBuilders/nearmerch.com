@@ -10,13 +10,16 @@ export function processPaymentSuccessEffect(options: {
   order: OrderWithItems;
   actor: string;
   metadata?: Record<string, unknown>;
+  paymentAlreadyClaimed?: boolean;
 }): Effect.Effect<{ order: OrderWithItems; allProviderConfirmationsSucceeded: boolean; confirmationResults: Record<string, { success: boolean; error?: string }> }, Error, OrderStore | ProviderConfigStore | EmailService> {
-  const { runtime, order, actor, metadata } = options;
+  const { runtime, order, actor, metadata, paymentAlreadyClaimed = false } = options;
 
   return Effect.gen(function* () {
     const orderStore = yield* OrderStore;
 
-    yield* orderStore.updateStatus(order.id, 'paid', actor, 'payment.success', metadata);
+    if (!paymentAlreadyClaimed) {
+      yield* orderStore.updateStatus(order.id, 'paid', actor, 'payment.success', metadata);
+    }
 
     const paidResult = yield* handleOrderPaidEffect({ runtime, order });
     const finalStatus: OrderStatus = paidResult.allProviderConfirmationsSucceeded

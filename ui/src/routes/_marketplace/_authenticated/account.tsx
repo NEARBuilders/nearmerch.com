@@ -1,6 +1,7 @@
 import { authClient } from "@/lib/auth-client";
 import { useNearAccountId } from "@/hooks/use-near-account-id";
 import { clearFormPersistence } from "@/hooks/use-form-persistence";
+import { clearPersistedCart } from "@/stores/cart-store";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   createFileRoute,
@@ -33,6 +34,7 @@ function MyAccountPage() {
     try {
       await authClient.signOut();
       await authClient.near.disconnect();
+      clearPersistedCart();
       clearFormPersistence();
       queryClient.invalidateQueries();
       toast.success("Signed out successfully");

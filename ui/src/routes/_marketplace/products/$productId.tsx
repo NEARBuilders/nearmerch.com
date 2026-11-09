@@ -21,16 +21,19 @@ import {
   findVariantForSelection,
   getAvailableSizesForColor,
   getAttributeHex,
-  getInitialSizeForColor,
   getOptionValue,
   getUnavailableVariantMessage,
   getVariantImage,
   getVariantImageUrl,
   hasSelectableSizes,
   resolveSelectedSizeForColor,
-  sizeAfterColorChange,
   sizeOptionSelection,
 } from "@/lib/product-utils";
+import {
+  getProductVariantSearch,
+  parseProductRouteSearch,
+  resolveProductVariantSelection,
+} from "@/lib/product-route-search";
 import {
   absoluteUrl,
   buildProductDescription,
@@ -93,6 +96,8 @@ function formatFeeType(type: string): string {
 
 export const Route = createFileRoute("/_marketplace/products/$productId")({
   pendingComponent: LoadingSpinner,
+  validateSearch: parseProductRouteSearch,
+  shouldReload: ({ cause }) => cause !== "stay",
   loader: async ({ params, context }) => {
     const siteUrl = context.runtimeConfig?.hostUrl ?? '';
     const assetsUrl = context.assetsUrl ?? '';
@@ -170,6 +175,8 @@ function ProductDetailPage() {
   const openCartSidebar = useCartSidebarStore((state) => state.open);
 
   const loaderData = Route.useLoaderData();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
 
   const { product } = loaderData.data;
 
@@ -219,17 +226,24 @@ function ProductDetailPage() {
   const orderedSizes = sizeOption?.values || [];
   const orderedColors = colorOption?.values || [];
 
-  const defaultColor = orderedColors[0] || "";
-  const sizesForDefaultColor = getAvailableSizesForColor({
+  const {
+    color: selectedColor,
+    size: selectedSize,
+    requestedSize,
+  } = resolveProductVariantSelection({
+    colors: orderedColors,
     sizes: orderedSizes,
     variants: availableVariants,
-    selectedColor: defaultColor,
-    hasColorOptions: orderedColors.length > 0,
+    search,
   });
-  const defaultSize = getInitialSizeForColor(sizesForDefaultColor);
 
-  const [selectedColor, setSelectedColor] = useState<string>(defaultColor);
-  const [selectedSize, setSelectedSize] = useState<string>(defaultSize);
+  const selectVariant = (selection: { color: string; size: string }) => {
+    navigate({
+      search: getProductVariantSearch(search, selection),
+      replace: true,
+      resetScroll: false,
+    });
+  };
 
   const availableSizesForColor = getAvailableSizesForColor({
     sizes: orderedSizes,
@@ -342,25 +356,24 @@ function ProductDetailPage() {
 
   // Reset image index when product changes
   useEffect(() => {
-    setSelectedColor(defaultColor);
-    setSelectedSize(defaultSize);
     setCurrentImageIndex(0);
     setIsManualImageSelection(false);
     isInitialMountRef.current = true;
     prevColorSizeRef.current = null;
-  }, [defaultColor, defaultSize, product.id]);
-
-  useEffect(() => {
-    const nextSize = sizeAfterColorChange(selectedSize, availableSizesForColor);
-    if (nextSize !== selectedSize) setSelectedSize(nextSize);
-  }, [selectedSize, availableSizesForColor]);
+  }, [product.id]);
 
   // When color/variant changes via color picker (not thumbnail click), update main image
   useEffect(() => {
-    // Skip on initial mount - always start with first image
+    // On initial mount start with the first image unless the URL picked a variant
     if (isInitialMountRef.current) {
       isInitialMountRef.current = false;
       prevColorSizeRef.current = { color: selectedColor, size: selectedSize };
+      if ((search.color || search.size) && variantImage) {
+        const variantImageIndex = validImages.findIndex(
+          (img) => img.id === variantImage.id
+        );
+        if (variantImageIndex !== -1) setCurrentImageIndex(variantImageIndex);
+      }
       return;
     }
 
@@ -640,7 +653,7 @@ function ProductDetailPage() {
                             
                             const variantColor = getOptionValue(preferredVariant.attributes, "Color");
                             if (variantColor && orderedColors.includes(variantColor)) {
-                              setSelectedColor(variantColor);
+                              selectVariant({ color: variantColor, size: requestedSize });
                             }
                           }
                         }
@@ -777,7 +790,7 @@ function ProductDetailPage() {
                         key={color}
                         onClick={() => {
                           setIsManualImageSelection(false);
-                          setSelectedColor(color);
+                          selectVariant({ color, size: requestedSize });
                         }}
                         className={cn(
                             "size-10 rounded-lg border-2 transition-colors overflow-hidden",
@@ -818,7 +831,7 @@ function ProductDetailPage() {
                             toast.error(selection.error);
                             return;
                           }
-                          setSelectedSize(selection.size);
+                          selectVariant({ color: selectedColor, size: selection.size });
                         }}
                         className={cn(
                             "px-5 py-2.5 tracking-[-0.48px] transition-all rounded-lg font-medium text-sm border-2",

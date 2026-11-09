@@ -26,7 +26,6 @@ import {
   getVariantImage,
   getVariantImageUrl,
   hasSelectableSizes,
-  resolveSelectedSizeForColor,
   sizeOptionSelection,
 } from "@/lib/product-utils";
 import {
@@ -251,15 +250,10 @@ function ProductDetailPage() {
     selectedColor,
     hasColorOptions: orderedColors.length > 0,
   });
-  const effectiveSelectedSize = resolveSelectedSizeForColor(
-    selectedSize,
-    availableSizesForColor
-  );
-
   const hasSizeOptions = hasSelectableSizes(orderedSizes);
   const selectedVariant = findVariantForSelection(availableVariants, {
     selectedColor,
-    selectedSize: effectiveSelectedSize,
+    selectedSize,
     hasColorOptions: orderedColors.length > 0,
     hasSizeOptions,
   });
@@ -270,7 +264,6 @@ function ProductDetailPage() {
   const [quantity, setQuantity] = useState(1);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerImageIndex, setViewerImageIndex] = useState(0);
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isManualImageSelection, setIsManualImageSelection] = useState(false);
   
   // Track previous color/size to detect actual changes (not initial mount)
@@ -323,6 +316,12 @@ function ProductDetailPage() {
           )
         : undefined,
     [validImages, availableVariants, selectedVariantId]
+  );
+
+  const [currentImageIndex, setCurrentImageIndex] = useState(() =>
+    (search.color || search.size) && variantImage
+      ? Math.max(0, validImages.findIndex((img) => img.id === variantImage.id))
+      : 0
   );
 
   const handleShareReferral = async () => {
@@ -415,9 +414,9 @@ function ProductDetailPage() {
     if (!selectedVariant) {
       toast.error(
         getUnavailableVariantMessage({
-          selectedSize,
+          selectedSize: requestedSize,
           selectedColor,
-          effectiveSelectedSize,
+          effectiveSelectedSize: selectedSize,
           availableSizesForColor,
           hasSizeOptions,
         }),
@@ -425,7 +424,7 @@ function ProductDetailPage() {
       return;
     }
     const variantImageUrl = selectedVariantId ? getVariantImageUrl(product, selectedVariantId) : undefined;
-    const cartSize = getOptionValue(selectedVariant.attributes, "Size") || effectiveSelectedSize;
+    const cartSize = getOptionValue(selectedVariant.attributes, "Size") || selectedSize;
     const cartColor = getOptionValue(selectedVariant.attributes, "Color") || selectedColor;
     for (let i = 0; i < quantity; i++) {
       addToCart(
@@ -816,7 +815,7 @@ function ProductDetailPage() {
                 <div className="flex flex-wrap gap-2">
                   {orderedSizes.map((size) => {
                     const isAvailable = availableSizesForColor.includes(size);
-                    const isSelected = isAvailable && size === effectiveSelectedSize;
+                    const isSelected = isAvailable && size === selectedSize;
 
                     return (
                       <button

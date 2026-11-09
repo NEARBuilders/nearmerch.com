@@ -21,6 +21,13 @@ function optionalString(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function findOption(options: string[], value: string | undefined) {
+  const normalized = value?.toLowerCase();
+  return normalized
+    ? options.find((option) => option.toLowerCase() === normalized)
+    : undefined;
+}
+
 export function parseProductRouteSearch(
   search: Record<string, unknown>,
 ): ProductRouteSearch {
@@ -42,10 +49,7 @@ export function resolveProductVariantSelection({
   variants: VariantWithOptions[];
   search: Pick<ProductRouteSearch, "color" | "size">;
 }): ProductVariantSelection {
-  const color =
-    search.color && colors.includes(search.color)
-      ? search.color
-      : colors[0] || "";
+  const color = findOption(colors, search.color) ?? colors[0] ?? "";
 
   if (!hasSelectableSizes(sizes)) {
     return { color, size: "", requestedSize: "" };
@@ -58,9 +62,7 @@ export function resolveProductVariantSelection({
     hasColorOptions: colors.length > 0,
   });
   const requestedSize =
-    search.size && sizes.includes(search.size)
-      ? search.size
-      : getInitialSizeForColor(availableSizes);
+    findOption(sizes, search.size) ?? getInitialSizeForColor(availableSizes);
 
   return {
     color,

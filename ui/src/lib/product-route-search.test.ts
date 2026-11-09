@@ -66,6 +66,15 @@ describe("resolveProductVariantSelection", () => {
     ).toEqual({ color: "Black", size: "M", requestedSize: "M" });
   });
 
+  it("matches color and size params case-insensitively", () => {
+    expect(
+      resolveProductVariantSelection({
+        ...shirt,
+        search: { color: "white", size: "s" },
+      }),
+    ).toEqual({ color: "White", size: "S", requestedSize: "S" });
+  });
+
   it("picks the default size for the URL color when no size is given", () => {
     expect(
       resolveProductVariantSelection({ ...shirt, search: { color: "White" } }),

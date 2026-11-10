@@ -75,6 +75,7 @@ export default createPlugin({
             );
             return {
               received: true,
+              eventId: result.eventId,
               eventType: result.eventType,
               orderId: result.orderId,
               sessionId: result.sessionId,

@@ -137,7 +137,7 @@ export const PingPayServiceLive = (config: PingPayConfig) =>
 
           console.log(`[PingPay Webhook] Received event: ${payload.type}, sessionId: ${sessionId}`);
 
-          return { eventType: payload.type, orderId, sessionId };
+          return { eventId: payload.id, eventType: payload.type, orderId, sessionId };
         }),
 
       getSession: (sessionId) =>

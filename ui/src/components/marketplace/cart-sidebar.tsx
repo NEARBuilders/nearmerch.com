@@ -15,7 +15,8 @@ interface CartSidebarProps {
 }
 
 export function CartSidebar({ isOpen, onClose }: CartSidebarProps) {
-  const { cartItems, subtotal, updateQuantity, removeItem } = useCart();
+  const { cartItems, subtotal, updateQuantity, removeItem, isCartLoading } =
+    useCart();
   const router = useRouter();
   const canGoBack = useCanGoBack();
 
@@ -54,7 +55,20 @@ export function CartSidebar({ isOpen, onClose }: CartSidebarProps) {
           </p>
         </div>
         <div className="flex-1 overflow-y-auto px-6 min-h-0">
-          {cartItems.length === 0 ? (
+          {isCartLoading ? (
+            <div className="space-y-4 py-6" role="status" aria-live="polite">
+              <span className="sr-only">Loading your cart…</span>
+              {[0, 1].map((i) => (
+                <div key={i} className="flex gap-4 animate-pulse" aria-hidden="true">
+                  <div className="size-20 rounded-xl bg-muted shrink-0" />
+                  <div className="flex-1 space-y-3 py-2">
+                    <div className="h-4 w-2/3 rounded bg-muted" />
+                    <div className="h-4 w-1/3 rounded bg-muted" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : cartItems.length === 0 ? (
             <div className="py-12 text-center text-foreground/90 dark:text-muted-foreground">
               <p className="text-sm">
                 Your cart is empty

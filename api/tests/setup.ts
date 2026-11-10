@@ -56,6 +56,8 @@ const TEST_CONFIG = {
     API_DATABASE_URL: TEST_DB_URL,
     PING_API_KEY: 'test_api_key',
     PING_WEBHOOK_SECRET: 'whsec_test_secret_key',
+    STRIPE_SECRET_KEY: 'sk_test_payment_webhook_regression',
+    STRIPE_WEBHOOK_SECRET: 'whsec_stripe_test_secret_key',
     MANUAL_WEBHOOK_SECRET: 'manual_whsec_test_secret',
     // Printful v2 webhook secret is hex; tests compute HMAC over raw body.
     PRINTFUL_WEBHOOK_SECRET: 'a'.repeat(64),

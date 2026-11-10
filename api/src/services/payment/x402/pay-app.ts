@@ -24,6 +24,7 @@ import type { X402IntentsPayDeps } from "./intents/types";
 import { isNonTerminalX402SettleFailure } from "./settlement";
 
 const X402_PAY_DESCRIPTION = "Pay for an existing merch order (USDC on Base)";
+const X402_INTENTS_ONLY_DESCRIPTION = "Pay for an existing merch order (any NEAR Intents asset)";
 const X402_PAY_MIME_TYPE = "application/json";
 
 export type X402PayOrder = {
@@ -38,7 +39,11 @@ export type X402PayOrder = {
 };
 
 export type X402PayAppDeps = {
-  payTo: string;
+  /**
+   * Base USDC recipient for the eip3009 `exact` path. Omit to serve the
+   * near-intents path only (then `intents` is required).
+   */
+  payTo?: string;
   facilitatorUrl?: string;
   facilitator?: FacilitatorClient;
   getOrder: (orderId: string) => Promise<X402PayOrder | null>;
@@ -80,7 +85,7 @@ function settleErrorReason(error: unknown): string | undefined {
   return error instanceof Error ? error.message : undefined;
 }
 
-export function createX402PayApp(deps: X402PayAppDeps): Hono {
+function createPhase1Middleware(deps: X402PayAppDeps & { payTo: string }) {
   const network = getX402Network();
   const usdc = getX402UsdcAddress();
   const extra = getX402UsdcExtra();
@@ -174,6 +179,20 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
     return;
   });
 
+  return paymentMiddlewareFromHTTPServer(
+    httpServer,
+    undefined,
+    undefined,
+    deps.syncFacilitatorOnStart ?? true,
+  );
+}
+
+export function createX402PayApp(deps: X402PayAppDeps): Hono {
+  const payTo = deps.payTo;
+  if (!payTo && !deps.intents) {
+    throw new Error("createX402PayApp needs a Base payTo or the near-intents deps");
+  }
+
   const app = new Hono();
 
   const paidResponse = async (c: Context, orderId: string) => {
@@ -206,15 +225,16 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
 
   if (deps.intents) {
     // Runs before Phase 1: handles near-intents payloads itself and adds the
-    // intents entries to Phase 1's unpaid 402. Without it, Phase 1 is unchanged.
+    // intents entries to Phase 1's unpaid 402. Without Phase 1 (no Base payTo)
+    // it serves the whole route. Without it, Phase 1 is unchanged.
     app.use(
       "/orders/:id/pay",
       createX402IntentsMiddleware({
         deps: deps.intents,
-        payTo: deps.payTo,
+        withPhase1: Boolean(payTo),
         resource: (c) => ({
           url: c.req.url,
-          description: X402_PAY_DESCRIPTION,
+          description: payTo ? X402_PAY_DESCRIPTION : X402_INTENTS_ONLY_DESCRIPTION,
           mimeType: X402_PAY_MIME_TYPE,
         }),
         paidResponse,
@@ -222,15 +242,9 @@ export function createX402PayApp(deps: X402PayAppDeps): Hono {
     );
   }
 
-  app.use(
-    "/orders/:id/pay",
-    paymentMiddlewareFromHTTPServer(
-      httpServer,
-      undefined,
-      undefined,
-      deps.syncFacilitatorOnStart ?? true,
-    ),
-  );
+  if (payTo) {
+    app.use("/orders/:id/pay", createPhase1Middleware({ ...deps, payTo }));
+  }
 
   app.post("/orders/:id/pay", (c) => paidResponse(c, c.req.param("id")));
 

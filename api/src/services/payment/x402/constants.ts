@@ -56,11 +56,20 @@ export const X402_INTENTS_PAYMENT_FLOW = "upfront" as const;
  */
 export const X402_INTENTS_OPERATION_GRACE_SECONDS = 24 * 60 * 60;
 
-/** Default per-origin `maxTimeoutSeconds` when X402_INTENTS_ORIGINS omits it. */
+/** `maxTimeoutSeconds` for an offer entry that omits it. */
 export const X402_INTENTS_DEFAULT_MAX_TIMEOUT_SECONDS = 3600;
 
-/** 1Click caps the total of all app fees at 500 bps of amountIn. */
-export const X402_INTENTS_MAX_APP_FEE_BPS = 500;
+/** Ping Agent Pay x402 facilitator (production). Staging: https://staging.pingpay.io/agentpay/x402 */
+export const X402_INTENTS_DEFAULT_FACILITATOR_URL = "https://pay.pingpay.io/agentpay/x402";
+
+/** Unquoted offers are cached per amountOut for this long (they carry no deposit address). */
+export const X402_INTENTS_OFFERS_CACHE_MS = 60 * 1000;
+
+/** Receipt network when Ping settles through NEAR Intents (NEAR tx hash). */
+export const X402_INTENTS_NEAR_MAINNET = "near:mainnet" as const;
+
+/** 1Click status for a short deposit: top up the same address and retry settle. */
+export const X402_INTENTS_INCOMPLETE_DEPOSIT = "INCOMPLETE_DEPOSIT" as const;
 
 /** Quote requests allowed per order per window (each quote mints a deposit address). */
 export const X402_INTENTS_QUOTE_RATE_LIMIT = 10;

@@ -20,22 +20,27 @@ import type { X402IntentsPayDeps } from '@/services/payment/x402/intents/types';
 
 /**
  * #238 end-to-end: pay app (Phase 1 + near-intents middleware) -> real HTTP
- * facilitator client -> mock near-intents facilitator -> mock 1Click API,
- * with the real API procedures and Postgres underneath.
+ * facilitator client -> mock Ping Agent Pay facilitator (`/offers`, `/verify`,
+ * `/settle`, `/execution`, X-Api-Key) -> mock 1Click API, with the real API
+ * procedures and Postgres underneath. Response shapes follow Ping's x402 docs
+ * (pingpay.gitbook.io/docs/pingpay-api/agent-pay-facilitator/x402-integration).
  */
 
 const TEST_USER = 'test-user.near';
 const PAY_TO = '0x0000000000000000000000000000000000000abc';
 const HOST_SECRET = 'test-x402-host-secret';
-const FACILITATOR_URL = 'https://intents-facilitator.test';
+const FACILITATOR_URL = 'https://ping.test/agentpay/x402';
+const API_KEY = 'test-ping-agentpay-key';
 const ONE_CLICK_URL = 'https://1click.test';
 const ARB = 'eip155:42161';
 const ARB_USDC = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
+const BASE = 'eip155:8453';
+const NEAR_MAINNET = 'near:mainnet';
+const NEAR_USDC = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+/** Set in the Ping dashboard, never in nearmerch code. */
+const NEAR_RECIPIENT = 'merchant-dao.test.near';
 const REFUND_TO = '0x2222222222222222222222222222222222222222';
 const BUYER = '0x3333333333333333333333333333333333333333';
-const ORIGINS = [
-  { network: ARB, asset: ARB_USDC, decimals: 6, maxTimeoutSeconds: 300, usdPegged: true },
-];
 
 const shippingAddress = {
   firstName: 'John',
@@ -86,7 +91,8 @@ class MockOneClick {
         quoteRequest: body,
         status: 'PENDING_DEPOSIT',
         originTxHashes: [],
-        destinationTxHash: `0x${this.next.toString(16).padStart(64, 'b')}`,
+        // NEAR tx hashes are base58.
+        destinationTxHash: `NearTx${this.next}${'1'.repeat(38)}`,
       });
       return Response.json({
         quote: { depositAddress, amountIn, amountOut: body.amount, deadline: body.deadline },
@@ -102,8 +108,7 @@ class MockOneClick {
         quoteResponse: { quoteRequest: quote.quoteRequest },
         swapDetails: {
           originChainTxHashes: quote.originTxHashes.map((hash) => ({ hash })),
-          destinationChainTxHashes:
-            quote.status === 'SUCCESS' ? [{ hash: quote.destinationTxHash }] : [],
+          nearTxHashes: quote.status === 'SUCCESS' ? [quote.destinationTxHash] : [],
           amountOut: quote.status === 'SUCCESS' ? quote.quoteRequest.amount : undefined,
           refundedAmount: quote.status === 'REFUNDED' ? quote.amountIn : undefined,
         },
@@ -115,36 +120,89 @@ class MockOneClick {
   /** Simulate the buyer's deposit landing at 1Click and the swap reaching `status`. */
   deposit(depositAddress: string, txHash: string, status: OneClickStatus) {
     const quote = this.quotes.get(depositAddress)!;
-    quote.originTxHashes.push(txHash);
+    if (!quote.originTxHashes.includes(txHash)) quote.originTxHashes.push(txHash);
     quote.status = status;
   }
 }
 
 /**
- * Mock near-intents facilitator (spec #3370) in front of MockOneClick:
- * /verify mints a quote, /settle reads 1Click status. Records one result per
- * operation like a real facilitator.
+ * Mock Ping Agent Pay x402 facilitator in front of MockOneClick. Destination
+ * (USDC on NEAR to the dashboard recipient) comes from "dashboard" settings;
+ * /settle receipts for Intents settlement are on near:mainnet.
  */
-class MockIntentsFacilitator {
+class MockPingFacilitator {
+  offersCalls = 0;
   verifyCalls = 0;
   settleCalls = 0;
+  executionCalls: Array<{ depositAddress: string }> = [];
   verifyBodies: Array<{ paymentRequirements: PaymentRequirements }> = [];
   settleBodies: Array<{ paymentRequirements: PaymentRequirements }> = [];
+  apiKeys = new Set<string | null>();
+  /** Origins Ping advertises (1Click supported). */
+  origins = [
+    { network: ARB, asset: ARB_USDC },
+    { network: BASE, asset: X402_USDC_BASE },
+  ];
+  /** Test switches. */
+  offersStatus = 200;
+  settleTransient = 0;
+  receiptAmount: 'exact' | 'omit' | 'wrong' = 'exact';
   private recorded = new Map<string, Record<string, unknown>>();
+  private executed = new Set<string>();
 
   constructor(private oneClick: MockOneClick) {}
 
   async fetch(input: string, init?: RequestInit): Promise<Response> {
     const url = new URL(input);
-    const body = JSON.parse(String(init?.body ?? '{}')) as {
-      paymentPayload: PaymentPayload;
-      paymentRequirements: PaymentRequirements;
-    };
-    if (url.pathname === '/verify') return Response.json(await this.verify(body));
-    if (url.pathname === '/settle') {
+    const key = new Headers(init?.headers).get('x-api-key');
+    this.apiKeys.add(key);
+    if (key !== API_KEY) return Response.json({ error: 'API key required', code: 'unauthorized' }, { status: 401 });
+    const path = url.pathname.replace('/agentpay/x402', '');
+
+    if (path === '/offers') {
+      this.offersCalls += 1;
+      if (this.offersStatus !== 200) {
+        return Response.json({ error: 'Agent Pay disabled', code: 'agent_pay_disabled' }, { status: this.offersStatus });
+      }
+      const amountOut = url.searchParams.get('amountOut')!;
+      return Response.json({
+        x402Version: 2,
+        accepts: this.origins.map((origin) => ({
+          scheme: 'exact',
+          network: origin.network,
+          asset: origin.asset,
+          amount: '',
+          payTo: '',
+          maxTimeoutSeconds: 300,
+          extra: {
+            settlementBackend: 'near-intents',
+            assetTransferMethod: 'near-intents',
+            paymentFlow: 'upfront',
+            destination: { network: NEAR_MAINNET, asset: NEAR_USDC, amount: amountOut, recipient: NEAR_RECIPIENT },
+          },
+        })),
+      });
+    }
+
+    const body = JSON.parse(String(init?.body ?? '{}'));
+    if (path === '/verify') {
+      const result = await this.verify(body);
+      return Response.json(result, { status: 'code' in result ? 400 : 200 });
+    }
+    if (path === '/settle') {
+      if (this.settleTransient > 0) {
+        this.settleTransient -= 1;
+        return Response.json({ error: 'upstream timeout' }, { status: 504 });
+      }
       const result = await this.settle(body);
-      // Real facilitators answer failures with a non-2xx; the client must keep the body.
-      return Response.json(result, { status: result.success ? 200 : 400 });
+      const terminal = result.success === false && result.errorReason === 'exact_near_intents_payment_failed';
+      return Response.json(result, { status: terminal ? 402 : 200 });
+    }
+    if (path === '/execution') {
+      this.executionCalls.push(body);
+      const first = !this.executed.has(body.depositAddress);
+      this.executed.add(body.depositAddress);
+      return Response.json({ execute: first });
     }
     return Response.json({ message: 'unknown route' }, { status: 404 });
   }
@@ -153,30 +211,24 @@ class MockIntentsFacilitator {
     this.verifyCalls += 1;
     this.verifyBodies.push(body);
     const { paymentPayload, paymentRequirements } = body;
-    const payload = paymentPayload.payload as { refundTo: string; slippageTolerance?: number };
-    const destination = paymentRequirements.extra.destination as {
-      amount: string;
-      recipient: string;
-    };
-    const deadline = new Date(
-      Date.now() + paymentRequirements.maxTimeoutSeconds * 1000,
-    ).toISOString();
+    const payload = paymentPayload.payload as { refundTo?: string; slippageTolerance?: number };
+    if (!payload.refundTo) return { error: 'refundTo required', code: 'refund_address_required' };
+    const destination = paymentRequirements.extra.destination as { amount: string; recipient: string };
+    const deadline = new Date(Date.now() + paymentRequirements.maxTimeoutSeconds * 1000).toISOString();
     const response = await this.oneClick.fetch(`${ONE_CLICK_URL}/v0/quote`, {
       method: 'POST',
       body: JSON.stringify({
         dry: false,
         swapType: 'EXACT_OUTPUT',
         depositType: 'ORIGIN_CHAIN',
-        depositMode: 'SIMPLE',
-        originAsset: `nep141:arb-${paymentRequirements.asset.toLowerCase()}.omft.near`,
-        destinationAsset: `nep141:base-${X402_USDC_BASE.toLowerCase()}.omft.near`,
+        originAsset: `nep141:${paymentRequirements.network}-${paymentRequirements.asset.toLowerCase()}.omft.near`,
+        destinationAsset: `nep141:${NEAR_USDC}`,
         amount: destination.amount,
         recipient: destination.recipient,
-        recipientType: 'DESTINATION_CHAIN',
+        recipientType: 'INTENTS',
         refundTo: payload.refundTo,
         refundType: 'ORIGIN_CHAIN',
         slippageTolerance: payload.slippageTolerance ?? 100,
-        appFees: paymentRequirements.extra.appFees,
         deadline,
       }),
     });
@@ -188,7 +240,7 @@ class MockIntentsFacilitator {
         depositAddress: quote.quote.depositAddress,
         amountIn: quote.quote.amountIn,
         refundDeadline: deadline,
-        operationToken: `k1.${Math.floor(Date.parse(deadline) / 1000) + 86400}.mac-${quote.quote.depositAddress}`,
+        operationToken: `ping.${quote.quote.depositAddress}.hmac`,
       },
     };
   }
@@ -197,31 +249,21 @@ class MockIntentsFacilitator {
     this.settleCalls += 1;
     this.settleBodies.push(body);
     const { paymentPayload, paymentRequirements } = body;
-    const deposit = paymentPayload.payload as {
-      depositAddress: string;
-      txHash: string;
-      operationToken: string;
-    };
+    const deposit = paymentPayload.payload as { depositAddress: string; txHash: string; operationToken: string };
+    if (deposit.operationToken !== `ping.${deposit.depositAddress}.hmac`) {
+      return { success: false, errorReason: 'invalid_exact_near_intents_token_invalid', transaction: '', network: paymentPayload.accepted.network };
+    }
     const operation = `${paymentPayload.accepted.network}:${deposit.depositAddress}`;
     const recorded = this.recorded.get(operation);
     if (recorded) return recorded;
 
-    const destination = paymentRequirements.extra.destination as {
-      network: string;
-      amount: string;
-      recipient: string;
-    };
+    const destination = paymentRequirements.extra.destination as { network: string; amount: string; recipient: string };
     const status = (await (
-      await this.oneClick.fetch(
-        `${ONE_CLICK_URL}/v0/status?depositAddress=${deposit.depositAddress}`,
-      )
+      await this.oneClick.fetch(`${ONE_CLICK_URL}/v0/status?depositAddress=${deposit.depositAddress}`)
     ).json()) as {
       status: OneClickStatus;
       quoteResponse: { quoteRequest: { amount: string; recipient: string; refundTo: string } };
-      swapDetails: {
-        originChainTxHashes: Array<{ hash: string }>;
-        destinationChainTxHashes: Array<{ hash: string }>;
-      };
+      swapDetails: { originChainTxHashes: Array<{ hash: string }>; nearTxHashes: string[] };
     };
     const quoteRequest = status.quoteResponse.quoteRequest;
     if (quoteRequest.amount !== destination.amount || quoteRequest.recipient !== destination.recipient) {
@@ -235,10 +277,12 @@ class MockIntentsFacilitator {
     if (status.status === 'SUCCESS') {
       result = {
         success: true,
-        network: destination.network,
-        transaction: status.swapDetails.destinationChainTxHashes[0]!.hash,
+        network: NEAR_MAINNET,
+        transaction: status.swapDetails.nearTxHashes[0]!,
         payer: BUYER,
-        amount: destination.amount,
+        ...(this.receiptAmount === 'omit'
+          ? {}
+          : { amount: this.receiptAmount === 'exact' ? destination.amount : '1' }),
         extra: { originNetwork: paymentPayload.accepted.network, originTxHash: deposit.txHash },
       };
     } else if (status.status === 'REFUNDED' || status.status === 'FAILED') {
@@ -250,14 +294,17 @@ class MockIntentsFacilitator {
         payer: BUYER,
         extra: { status: status.status, refundTo: quoteRequest.refundTo },
       };
-    } else {
-      // Non-terminal (INCOMPLETE_DEPOSIT, PROCESSING, ...): nothing recorded.
+    } else if (status.status === 'INCOMPLETE_DEPOSIT') {
+      // Short deposit: challenge stays active, top up and retry the same token.
       return {
         success: false,
-        errorReason: 'settlement_pending',
+        errorReason: 'exact_near_intents_insufficient_deposit',
         network: paymentPayload.accepted.network,
         transaction: deposit.txHash,
+        extra: { status: 'INCOMPLETE_DEPOSIT' },
       };
+    } else {
+      return { success: false, errorReason: 'settlement_pending', network: paymentPayload.accepted.network, transaction: deposit.txHash };
     }
     this.recorded.set(operation, result);
     return result;
@@ -285,10 +332,17 @@ async function hostClient() {
 }
 
 async function createApp(
-  options: { now?: () => number; overrides?: Partial<X402IntentsPayDeps> } = {},
+  options: {
+    now?: () => number;
+    overrides?: Partial<X402IntentsPayDeps>;
+    /** false: intents-only (no Base pay-to). */
+    withPhase1?: boolean;
+    setup?: (facilitator: MockPingFacilitator) => void;
+  } = {},
 ) {
   const oneClick = new MockOneClick();
-  const facilitator = new MockIntentsFacilitator(oneClick);
+  const facilitator = new MockPingFacilitator(oneClick);
+  options.setup?.(facilitator);
   const client = await hostClient();
   const deps = createX402IntentsPayDeps(client as never, {
     fetch: ((input: string, init?: RequestInit) => facilitator.fetch(input, init)) as typeof fetch,
@@ -297,7 +351,7 @@ async function createApp(
     ? { ...deps, ...(options.now ? { now: options.now } : {}), ...options.overrides }
     : undefined;
   const app = createX402PayApp({
-    payTo: PAY_TO,
+    payTo: options.withPhase1 === false ? undefined : PAY_TO,
     facilitator: phase1Facilitator(),
     syncFacilitatorOnStart: true,
     getOrder: (orderId) => client.getX402PayQuote({ orderId }),
@@ -357,11 +411,15 @@ function signature(orderId: string, accepted: PaymentRequirements, payload: Reco
 }
 
 /** Unpaid 402 -> quote round trip. Returns the unquoted and quoted entries. */
-async function quoteFlow(app: Awaited<ReturnType<typeof createApp>>['app'], orderId: string) {
+async function quoteFlow(
+  app: Awaited<ReturnType<typeof createApp>>['app'],
+  orderId: string,
+  network: string = ARB,
+) {
   const unpaid = await pay(app, orderId);
   expect(unpaid.status).toBe(402);
   const unquoted = requiredOf(unpaid)!.accepts.find(
-    (entry) => entry.extra?.assetTransferMethod === 'near-intents',
+    (entry) => entry.extra?.assetTransferMethod === 'near-intents' && entry.network === network,
   )!;
   expect(unquoted).toBeDefined();
 
@@ -408,11 +466,9 @@ async function operationsFor(orderId: string) {
 
 const PAID = ['paid', 'processing', 'paid_pending_fulfillment'];
 
-function setIntentsEnv(feeMode: 'out_of_band' | 'app_fees' = 'out_of_band') {
-  process.env.X402_INTENTS_ENABLED = 'true';
+function setIntentsEnv() {
   process.env.X402_INTENTS_FACILITATOR_URL = FACILITATOR_URL;
-  process.env.X402_INTENTS_ORIGINS = JSON.stringify(ORIGINS);
-  process.env.X402_INTENTS_FEE_MODE = feeMode;
+  process.env.X402_INTENTS_FACILITATOR_API_KEY = API_KEY;
 }
 
 function clearIntentsEnv() {
@@ -420,10 +476,9 @@ function clearIntentsEnv() {
   delete process.env.X402_INTENTS_FACILITATOR_URL;
   delete process.env.X402_INTENTS_FACILITATOR_API_KEY;
   delete process.env.X402_INTENTS_ORIGINS;
-  delete process.env.X402_INTENTS_FEE_MODE;
 }
 
-describe('x402 near-intents flow (#238)', () => {
+describe('x402 near-intents flow via Ping Agent Pay (#238)', () => {
   beforeAll(async () => {
     process.env.X402_ENABLED = 'true';
     process.env.X402_PAY_TO_ADDRESS = PAY_TO;
@@ -438,6 +493,7 @@ describe('x402 near-intents flow (#238)', () => {
   });
 
   beforeEach(async () => {
+    process.env.X402_PAY_TO_ADDRESS = PAY_TO;
     setIntentsEnv();
     await clearOrders();
     await clearProducts();
@@ -452,23 +508,24 @@ describe('x402 near-intents flow (#238)', () => {
 
   afterEach(async () => {
     clearIntentsEnv();
+    process.env.X402_PAY_TO_ADDRESS = PAY_TO;
     await clearOrders();
     await clearProducts();
     await getTestDb().delete(schema.providerConfigs).where(eq(schema.providerConfigs.provider, 'manual'));
   });
 
-  it('AC1: pays from USDC on Arbitrum; order reaches processing with fulfillment confirmed and the merchant gets the exact destination amount on Base', async () => {
+  it('AC1: pays from USDC on Arbitrum; the merchant gets the exact amount as USDC on NEAR to the dashboard recipient', async () => {
     const { app, oneClick, facilitator } = await createApp();
     const { client, orderId, totalAmount } = await createOrder();
     const total = usdDollarsToUsdcAtomic(totalAmount);
 
     const unpaid = await pay(app, orderId);
     const required = requiredOf(unpaid)!;
-    // Phase 1 exact/Base entry first, then one unquoted entry per origin.
-    expect(required.accepts).toHaveLength(2);
+    // Phase 1 exact/Base entry first, then Ping's unquoted offers.
+    expect(required.accepts).toHaveLength(3);
     expect(required.accepts[0]!.extra?.assetTransferMethod).toBe('eip3009');
     const unquoted = required.accepts[1]!;
-    expect(unquoted).toMatchObject({
+    expect(unquoted).toEqual({
       scheme: 'exact',
       network: ARB,
       asset: ARB_USDC,
@@ -476,22 +533,25 @@ describe('x402 near-intents flow (#238)', () => {
       payTo: '',
       maxTimeoutSeconds: 300,
       extra: {
+        settlementBackend: 'near-intents',
         assetTransferMethod: 'near-intents',
         paymentFlow: 'upfront',
-        indicativeAmount: total,
-        destination: { network: X402_NETWORK, asset: X402_USDC_BASE, amount: total, recipient: PAY_TO },
+        destination: { network: NEAR_MAINNET, asset: NEAR_USDC, amount: total, recipient: NEAR_RECIPIENT },
       },
     });
+    expect(required.accepts[2]).toMatchObject({ network: BASE, asset: X402_USDC_BASE, payTo: '' });
 
     const { quoted } = await quoteFlow(app, orderId);
+    // The 402 offers are cached; one /offers call for both 402s.
+    expect(facilitator.offersCalls).toBe(1);
     expect(facilitator.verifyCalls).toBe(1);
-    // /verify gets the server's unquoted entry, never the client's `accepted`.
+    // /verify gets Ping's own offer entry, never the client's `accepted`.
     expect(facilitator.verifyBodies[0]!.paymentRequirements).toEqual(unquoted);
     const [oneClickQuote] = [...oneClick.quotes.values()];
     expect(oneClickQuote!.quoteRequest).toMatchObject({
       swapType: 'EXACT_OUTPUT',
       amount: total,
-      recipient: PAY_TO,
+      recipient: NEAR_RECIPIENT,
       refundTo: REFUND_TO,
       refundType: 'ORIGIN_CHAIN',
     });
@@ -514,13 +574,20 @@ describe('x402 near-intents flow (#238)', () => {
     const receipt = receiptOf(paid)!;
     expect(receipt).toMatchObject({
       success: true,
-      network: X402_NETWORK,
+      network: NEAR_MAINNET,
+      transaction: oneClickQuote!.destinationTxHash,
       amount: total,
       extra: { originNetwork: ARB, originTxHash: txHash(1) },
     });
     expect(JSON.stringify(receipt)).not.toContain('operationToken');
-    // /settle used the recorded unquoted entry.
-    expect(facilitator.settleBodies[0]!.paymentRequirements).toEqual(unquoted);
+    // /settle used our recorded destination with the quoted instrument.
+    const settleRequirements = facilitator.settleBodies[0]!.paymentRequirements;
+    expect(settleRequirements.extra.destination).toEqual(unquoted.extra.destination);
+    expect(settleRequirements.payTo).toBe(quoted.payTo);
+    expect(settleRequirements.amount).toBe(quoted.amount);
+    // Every Ping call carried the API key; execution was claimed once.
+    expect([...facilitator.apiKeys]).toEqual([API_KEY]);
+    expect(facilitator.executionCalls).toEqual([{ depositAddress: quoted.payTo }]);
 
     order = await client.getOrder({ id: orderId });
     expect(order.order.status).toBe('processing');
@@ -528,7 +595,8 @@ describe('x402 near-intents flow (#238)', () => {
     const settlement = (order.order.paymentDetails as Record<string, any>).settlement;
     expect(settlement).toMatchObject({
       method: 'near-intents',
-      network: X402_NETWORK,
+      network: NEAR_MAINNET,
+      transaction: oneClickQuote!.destinationTxHash,
       amount: total,
       originNetwork: ARB,
       originTxHash: txHash(1),
@@ -540,7 +608,80 @@ describe('x402 near-intents flow (#238)', () => {
     expect(operation!.duplicate).toBe(false);
   });
 
-  it('AC2: a refunded swap returns funds to refundTo and marks the order payment_failed', async () => {
+  describe('intents-only (no X402_PAY_TO_ADDRESS)', () => {
+    beforeEach(() => {
+      delete process.env.X402_PAY_TO_ADDRESS;
+    });
+
+    it('creates x402 orders, serves only Ping offers, and settles end to end', async () => {
+      const { app, oneClick, facilitator } = await createApp({ withPhase1: false });
+      const { client, orderId, totalAmount } = await createOrder();
+
+      const unpaid = await pay(app, orderId);
+      expect(unpaid.status).toBe(402);
+      const required = requiredOf(unpaid)!;
+      expect(required.accepts.map((entry) => entry.network)).toEqual([ARB, BASE]);
+      expect(required.accepts.every((entry) => entry.extra?.assetTransferMethod === 'near-intents')).toBe(true);
+      expect(required.resource.url).toBe(resourceUrl(orderId));
+
+      // A Base eip3009 payment has nothing to settle against: 402 with the offers.
+      const eip3009 = await pay(
+        app,
+        orderId,
+        signature(orderId, { ...required.accepts[1]!, extra: { assetTransferMethod: 'eip3009' } }, { signature: '0x' }),
+      );
+      expect(eip3009.status).toBe(402);
+      expect(requiredOf(eip3009)!.error).toBe('unsupported_scheme');
+      expect(requiredOf(eip3009)!.accepts).toHaveLength(2);
+
+      // Pay from Base USDC through intents.
+      const { quoted } = await quoteFlow(app, orderId, BASE);
+      oneClick.deposit(quoted.payTo, txHash(11), 'SUCCESS');
+      const paid = await pay(app, orderId, depositHeader(orderId, quoted, txHash(11)));
+      expect(paid.status).toBe(200);
+      expect(receiptOf(paid)).toMatchObject({ network: NEAR_MAINNET, amount: usdDollarsToUsdcAtomic(totalAmount) });
+      expect((await client.getOrder({ id: orderId })).order.status).toBe('processing');
+      expect(facilitator.executionCalls).toHaveLength(1);
+
+      // A paid order answers 200 idempotently.
+      const again = await pay(app, orderId);
+      expect(again.status).toBe(200);
+      expect(await again.json()).toMatchObject({ orderId, idempotent: true });
+    });
+
+    it('answers 503 when Ping offers are unavailable and changes nothing', async () => {
+      const { app } = await createApp({ withPhase1: false, setup: (f) => { f.offersStatus = 403; } });
+      const { client, orderId } = await createOrder();
+      const response = await pay(app, orderId);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: 'intents_unavailable' });
+      expect((await client.getOrder({ id: orderId })).order.status).toBe('payment_pending');
+    });
+  });
+
+  it('serves Phase 1 only when Ping offers fail', async () => {
+    const { app } = await createApp({ setup: (f) => { f.offersStatus = 403; } });
+    const { orderId } = await createOrder();
+    const required = requiredOf(await pay(app, orderId))!;
+    expect(required.accepts).toHaveLength(1);
+    expect(required.accepts[0]!.extra?.assetTransferMethod).toBe('eip3009');
+  });
+
+  it('X402_INTENTS_ORIGINS narrows Ping offers; other origins are rejected before any quote', async () => {
+    process.env.X402_INTENTS_ORIGINS = JSON.stringify([BASE]);
+    const { app, facilitator } = await createApp();
+    const { orderId } = await createOrder();
+    const required = requiredOf(await pay(app, orderId))!;
+    expect(required.accepts.map((entry) => entry.network)).toEqual([X402_NETWORK, BASE]);
+
+    const arbOffer: PaymentRequirements = { ...required.accepts[1]!, network: ARB, asset: ARB_USDC };
+    const rejected = await pay(app, orderId, signature(orderId, arbOffer, { type: 'quote', refundTo: REFUND_TO }));
+    expect(rejected.status).toBe(402);
+    expect(requiredOf(rejected)!.error).toBe('invalid_network');
+    expect(facilitator.verifyCalls).toBe(0);
+  });
+
+  it('AC2: a refunded swap (terminal 402 from Ping) marks the order payment_failed', async () => {
     const { app, oneClick } = await createApp();
     const { client, orderId } = await createOrder();
     const { quoted } = await quoteFlow(app, orderId);
@@ -568,7 +709,7 @@ describe('x402 near-intents flow (#238)', () => {
     expect((await client.getOrder({ id: orderId })).order.status).toBe('payment_failed');
   });
 
-  it('AC3: settlement_pending keeps payment_pending, blocks new quotes, and retries converge to one charge and one fulfillment', async () => {
+  it('AC3: INCOMPLETE_DEPOSIT keeps payment_pending, blocks new quotes, and the top-up retry converges to one charge and one fulfillment', async () => {
     const start = Date.now();
     let offset = 0;
     const { app, oneClick, facilitator } = await createApp({ now: () => start + offset });
@@ -579,7 +720,7 @@ describe('x402 near-intents flow (#238)', () => {
     const pending = await pay(app, orderId, depositHeader(orderId, quoted, txHash(3)));
     expect(pending.status).toBe(402);
     expect(requiredOf(pending)!.error).toBe('settlement_pending');
-    expect(receiptOf(pending)).toMatchObject({ success: false, errorReason: 'settlement_pending' });
+    expect(receiptOf(pending)).toMatchObject({ success: false, extra: { status: 'INCOMPLETE_DEPOSIT' } });
 
     let order = await client.getOrder({ id: orderId });
     expect(order.order.status).toBe('payment_pending');
@@ -599,6 +740,11 @@ describe('x402 near-intents flow (#238)', () => {
     expect(requiredOf(await pay(app, orderId))?.accepts.some(
       (entry) => entry.extra?.assetTransferMethod === 'near-intents',
     ) ?? false).toBe(false);
+
+    // Still processing after the top-up: settlement_pending, same state.
+    oneClick.deposit(quoted.payTo, txHash(3), 'PROCESSING');
+    const processing = await pay(app, orderId, depositHeader(orderId, quoted, txHash(3)));
+    expect(requiredOf(processing)!.error).toBe('settlement_pending');
 
     // Retry past the 900 s Phase 1 window with the same token; swap completes.
     offset = 1_000_000;
@@ -627,10 +773,29 @@ describe('x402 near-intents flow (#238)', () => {
       reason: 'exact_near_intents_operation_executed',
     });
     expect(facilitator.settleCalls).toBe(settleCalls);
+    expect(facilitator.executionCalls).toHaveLength(1);
     expect(await auditCount(orderId, 'fulfillment:confirmed')).toBe(1);
     const operations = await operationsFor(orderId);
     expect(operations).toHaveLength(1);
     expect(operations[0]!.state).toBe('executed');
+  });
+
+  it('AC3: a 504 from Ping changes nothing and the retry settles', async () => {
+    const { app, oneClick, facilitator } = await createApp({ setup: (f) => { f.settleTransient = 1; } });
+    const { client, orderId } = await createOrder();
+    const { quoted } = await quoteFlow(app, orderId);
+    oneClick.deposit(quoted.payTo, txHash(12), 'SUCCESS');
+
+    const transient = await pay(app, orderId, depositHeader(orderId, quoted, txHash(12)));
+    expect(transient.status).toBe(502);
+    expect(await transient.json()).toEqual({ error: 'facilitator_unavailable' });
+    expect((await client.getOrder({ id: orderId })).order.status).toBe('payment_pending');
+    expect((await operationsFor(orderId))[0]!.state).toBe('quoted');
+
+    const retry = await pay(app, orderId, depositHeader(orderId, quoted, txHash(12)));
+    expect(retry.status).toBe(200);
+    expect(facilitator.settleCalls).toBe(1);
+    expect((await client.getOrder({ id: orderId })).order.status).toBe('processing');
   });
 
   it('AC3: a deposit that is not found changes nothing and can be retried', async () => {
@@ -674,148 +839,80 @@ describe('x402 near-intents flow (#238)', () => {
     expect(settlement.originTxHash).toBe(txHash(5));
   });
 
-  describe('AC4: fee splits on a fee\'d product', () => {
+  it('accepts a receipt without an amount and records the destination amount', async () => {
+    const { app, oneClick } = await createApp({ setup: (f) => { f.receiptAmount = 'omit'; } });
+    const { client, orderId, totalAmount } = await createOrder();
+    const { quoted } = await quoteFlow(app, orderId);
+    oneClick.deposit(quoted.payTo, txHash(13), 'SUCCESS');
+    expect((await pay(app, orderId, depositHeader(orderId, quoted, txHash(13)))).status).toBe(200);
+    const settlement = ((await client.getOrder({ id: orderId })).order.paymentDetails as Record<string, any>).settlement;
+    expect(settlement.amount).toBe(usdDollarsToUsdcAtomic(totalAmount));
+  });
+
+  it('a receipt for a different amount is not accepted as payment', async () => {
+    const { app, oneClick } = await createApp({ setup: (f) => { f.receiptAmount = 'wrong'; } });
+    const { client, orderId } = await createOrder();
+    const { quoted } = await quoteFlow(app, orderId);
+    oneClick.deposit(quoted.payTo, txHash(14), 'SUCCESS');
+    const response = await pay(app, orderId, depositHeader(orderId, quoted, txHash(14)));
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: 'settlement_mismatch' });
+    expect((await client.getOrder({ id: orderId })).order.status).toBe('payment_pending');
+  });
+
+  it('AC4: fee splits are recorded out of band; the merchant destination is the full total', async () => {
     const FEES: FeeConfig[] = [
       { type: 'royalty', label: 'Artist royalty', recipient: 'artist.near', bps: 300 },
       { type: 'affiliate', label: 'Affiliate', recipient: 'affiliate.near', bps: 100 },
     ];
+    await createTestProduct('prod_fees', { fulfillmentProvider: 'manual', metadata: { fees: FEES } as never });
+    await createTestProductVariant('var_fees', 'prod_fees');
+    const { app, oneClick } = await createApp();
+    const { client, orderId, totalAmount } = await createOrder('prod_fees', 'var_fees');
+    const total = usdDollarsToUsdcAtomic(totalAmount);
 
-    async function createFeedOrder(fees: FeeConfig[]) {
-      await createTestProduct('prod_fees', { fulfillmentProvider: 'manual', metadata: { fees } as never });
-      await createTestProductVariant('var_fees', 'prod_fees');
-      return createOrder('prod_fees', 'var_fees');
-    }
+    const { unquoted, quoted } = await quoteFlow(app, orderId);
+    expect(unquoted.extra.destination).toMatchObject({ amount: total });
+    expect(unquoted.extra.appFees).toBeUndefined();
 
-    it('app_fees: splits go to 1Click appFees, the merchant gets total minus splits, and the plan is recorded on the order', async () => {
-      setIntentsEnv('app_fees');
-      const { app, oneClick, facilitator } = await createApp();
-      const { client, orderId, totalAmount } = await createFeedOrder(FEES);
-      const total = BigInt(usdDollarsToUsdcAtomic(totalAmount));
-      const royalty = (total * 300n) / 10000n;
-      const affiliate = (total * 100n) / 10000n;
-      const destinationAmount = String(total - royalty - affiliate);
-
-      const { unquoted, quoted } = await quoteFlow(app, orderId);
-      expect(unquoted.extra).toMatchObject({
-        indicativeAmount: String(total),
-        destination: { amount: destinationAmount },
-        appFees: [
-          { recipient: 'artist.near', fee: 300 },
-          { recipient: 'affiliate.near', fee: 100 },
-        ],
-      });
-      const [oneClickQuote] = [...oneClick.quotes.values()];
-      expect(oneClickQuote!.quoteRequest).toMatchObject({
-        amount: destinationAmount,
-        appFees: [
-          { recipient: 'artist.near', fee: 300 },
-          { recipient: 'affiliate.near', fee: 100 },
-        ],
-      });
-
-      oneClick.deposit(quoted.payTo, txHash(7), 'SUCCESS');
-      const paid = await pay(app, orderId, depositHeader(orderId, quoted, txHash(7)));
-      expect(paid.status).toBe(200);
-      expect(receiptOf(paid)!.amount).toBe(destinationAmount);
-      expect(facilitator.settleBodies[0]!.paymentRequirements.extra.appFees).toHaveLength(2);
-
-      const order = await client.getOrder({ id: orderId });
-      expect(order.order.status).toBe('processing');
-      const details = order.order.paymentDetails as Record<string, any>;
-      expect(details.fees).toEqual(FEES);
-      expect(details.settlement.amount).toBe(destinationAmount);
-      expect(details.settlement.fees).toMatchObject({
-        mode: 'app_fees',
-        totalAmount: String(total),
-        destinationAmount,
-        splits: [
-          { type: 'royalty', recipient: 'artist.near', bps: 300, amount: String(royalty) },
-          { type: 'affiliate', recipient: 'affiliate.near', bps: 100, amount: String(affiliate) },
-        ],
-      });
-      expect(await auditCount(orderId, 'fulfillment:confirmed')).toBe(1);
-    });
-
-    it('out_of_band (default): merchant gets the full total, splits are recorded for reconciliation', async () => {
-      const { app, oneClick } = await createApp();
-      const { client, orderId, totalAmount } = await createFeedOrder(FEES);
-      const total = usdDollarsToUsdcAtomic(totalAmount);
-
-      const { unquoted, quoted } = await quoteFlow(app, orderId);
-      expect(unquoted.extra.destination).toMatchObject({ amount: total });
-      expect(unquoted.extra.appFees).toBeUndefined();
-      expect([...oneClick.quotes.values()][0]!.quoteRequest.appFees).toBeUndefined();
-
-      oneClick.deposit(quoted.payTo, txHash(8), 'SUCCESS');
-      expect((await pay(app, orderId, depositHeader(orderId, quoted, txHash(8)))).status).toBe(200);
-      const details = (await client.getOrder({ id: orderId })).order.paymentDetails as Record<string, any>;
-      expect(details.settlement.amount).toBe(total);
-      expect(details.settlement.fees).toMatchObject({ mode: 'out_of_band', destinationAmount: total });
-      expect(details.settlement.fees.splits).toHaveLength(2);
-    });
-
-    it('app_fees above the 500 bps 1Click cap falls back to out_of_band', async () => {
-      setIntentsEnv('app_fees');
-      const { app } = await createApp();
-      const { orderId, totalAmount } = await createFeedOrder([
-        { type: 'royalty', label: 'Artist royalty', recipient: 'artist.near', bps: 600 },
-      ]);
-      const { unquoted } = await quoteFlow(app, orderId);
-      expect(unquoted.extra.appFees).toBeUndefined();
-      expect(unquoted.extra.destination).toMatchObject({ amount: usdDollarsToUsdcAtomic(totalAmount) });
-    });
+    oneClick.deposit(quoted.payTo, txHash(8), 'SUCCESS');
+    expect((await pay(app, orderId, depositHeader(orderId, quoted, txHash(8)))).status).toBe(200);
+    const details = (await client.getOrder({ id: orderId })).order.paymentDetails as Record<string, any>;
+    expect(details.fees).toEqual(FEES);
+    expect(details.settlement.amount).toBe(total);
+    expect(details.settlement.fees).toMatchObject({ mode: 'out_of_band', destinationAmount: total });
+    expect(details.settlement.fees.splits).toHaveLength(2);
   });
 
-  describe('AC5: flag off is Phase 1 only', () => {
-    async function unpaidSnapshot(intentsEnabled: string | undefined) {
-      clearIntentsEnv();
-      if (intentsEnabled !== undefined) {
-        // Everything else configured; only the flag differs.
-        setIntentsEnv();
-        process.env.X402_INTENTS_ENABLED = intentsEnabled;
-      }
+  describe('AC5: X402_INTENTS_ENABLED=false is Phase 1 only', () => {
+    it('serves the exact Phase 1 402, byte-identical to a pay app without intents', async () => {
+      process.env.X402_INTENTS_ENABLED = 'false';
       const { app, intents } = await createApp();
+      expect(intents).toBeUndefined();
       const { orderId } = await createOrder();
-      const response = await pay(app, orderId);
-      const header = response.headers.get('payment-required')!;
-      const decoded = decodePaymentRequiredHeader(header);
-      return {
-        intents,
-        status: response.status,
-        body: await response.text(),
-        header,
-        decoded: { ...decoded, resource: { ...decoded.resource, url: '' } },
-        orderId,
-      };
-    }
+      const off = await pay(app, orderId);
+      expect(off.status).toBe(402);
+      const header = off.headers.get('payment-required')!;
+      expect(decodePaymentRequiredHeader(header).accepts).toHaveLength(1);
 
-    it('serves the exact Phase 1 402 when X402_INTENTS_ENABLED is unset or false', async () => {
-      const unset = await unpaidSnapshot(undefined);
-      await clearOrders();
-      const off = await unpaidSnapshot('false');
-
-      for (const snapshot of [unset, off]) {
-        expect(snapshot.intents).toBeUndefined();
-        expect(snapshot.status).toBe(402);
-        expect(snapshot.decoded.accepts).toHaveLength(1);
-        expect(snapshot.decoded.accepts[0]!.extra?.assetTransferMethod).toBe('eip3009');
-      }
-      expect(off.decoded).toEqual(unset.decoded);
-      expect(off.body).toBe(unset.body);
-
-      // Byte-identical to a pay app built without the intents option at all.
       const client = await hostClient();
       const phase1 = createX402PayApp({
         payTo: PAY_TO,
         facilitator: phase1Facilitator(),
         syncFacilitatorOnStart: true,
-        getOrder: (orderId) => client.getX402PayQuote({ orderId }),
-        settleOrder: (orderId, settlement) => client.settleX402Order({ orderId, ...settlement }),
-        failOrder: (orderId, settlement) => client.failX402Order({ orderId, ...settlement }),
+        getOrder: (id) => client.getX402PayQuote({ orderId: id }),
+        settleOrder: (id, settlement) => client.settleX402Order({ orderId: id, ...settlement }),
+        failOrder: (id, settlement) => client.failX402Order({ orderId: id, ...settlement }),
       });
-      const phase1Response = await pay(phase1, off.orderId);
-      expect(phase1Response.headers.get('payment-required')).toBe(off.header);
-      expect(await phase1Response.text()).toBe(off.body);
+      const phase1Response = await pay(phase1, orderId);
+      expect(phase1Response.headers.get('payment-required')).toBe(header);
+      expect(await phase1Response.text()).toBe(await off.text());
+    });
+
+    it('is inactive without an API key', async () => {
+      delete process.env.X402_INTENTS_FACILITATOR_API_KEY;
+      const { intents } = await createApp();
+      expect(intents).toBeUndefined();
     });
 
     it('a near-intents payment is rejected by Phase 1 when the flag is off and the order is untouched', async () => {
@@ -823,7 +920,7 @@ describe('x402 near-intents flow (#238)', () => {
       const { client, orderId } = await createOrder();
       const unquoted = requiredOf(await pay(on.app, orderId))!.accepts[1]!;
 
-      clearIntentsEnv();
+      process.env.X402_INTENTS_ENABLED = 'false';
       const { app, facilitator } = await createApp();
       const response = await pay(
         app,
@@ -838,7 +935,7 @@ describe('x402 near-intents flow (#238)', () => {
     });
 
     it('does not record fee splits on x402 orders when the flag is off', async () => {
-      clearIntentsEnv();
+      process.env.X402_INTENTS_ENABLED = 'false';
       const { client, orderId } = await createOrder();
       const details = (await client.getOrder({ id: orderId })).order.paymentDetails as Record<string, any> | null;
       expect(details?.fees).toBeUndefined();

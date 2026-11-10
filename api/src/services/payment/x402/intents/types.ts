@@ -5,7 +5,7 @@ import type {
   VerifyResponse,
 } from "@x402/core/types";
 import type { FeeConfig } from "../../../../schema";
-import type { X402IntentsFeeMode, X402IntentsOrigin } from "../config";
+import type { X402IntentsOrigin } from "../config";
 import type { X402PayOrder } from "../pay-app";
 
 export type X402IntentsDestination = {
@@ -13,12 +13,6 @@ export type X402IntentsDestination = {
   asset: string;
   amount: string;
   recipient: string;
-};
-
-/** 1Click appFee: `fee` is basis points of amountIn. */
-export type X402IntentsAppFee = {
-  recipient: string;
-  fee: number;
 };
 
 /** One royalty/affiliate split in destination-asset atomic units. */
@@ -31,13 +25,11 @@ export type X402IntentsFeeSplit = {
 };
 
 export type X402IntentsFeePlan = {
-  /** none: no splits; out_of_band: full total to merchant, splits recorded; app_fees: splits via 1Click appFees. */
-  mode: "none" | "out_of_band" | "app_fees";
+  /** none: no splits; out_of_band: full total to the merchant, splits recorded for reconciliation. */
+  mode: "none" | "out_of_band";
   totalAmount: string;
   destinationAmount: string;
   splits: X402IntentsFeeSplit[];
-  appFees?: X402IntentsAppFee[];
-  fallbackReason?: string;
 };
 
 export type X402IntentsOperationState =
@@ -108,6 +100,12 @@ export type X402IntentsFailResult = {
 };
 
 export type X402IntentsFacilitator = {
+  /**
+   * Unquoted `accepts[]` for a destination amount (Ping `GET /offers`): one
+   * entry per origin, empty `payTo`/`amount`, `extra.destination` from the
+   * merchant's dashboard settings.
+   */
+  offers(amountOut: string): Promise<PaymentRequirements[]>;
   verify(
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
@@ -116,6 +114,13 @@ export type X402IntentsFacilitator = {
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
   ): Promise<SettleResponse>;
+  /**
+   * Ping `POST /execution {depositAddress}`: claims the settled challenge as
+   * executed (what @pingpay/agentpay-middleware does before serving). Returns
+   * whether Ping granted the claim; undefined when the facilitator has no such
+   * route.
+   */
+  claimExecution?(depositAddress: string): Promise<boolean | undefined>;
 };
 
 export type X402IntentsOrderContext = {
@@ -127,8 +132,8 @@ export type X402IntentsPayDeps = {
   facilitatorUrl: string;
   /** Facilitator for a URL; recorded operations settle with the facilitator that quoted them. */
   getFacilitator: (facilitatorUrl: string) => X402IntentsFacilitator;
-  origins: X402IntentsOrigin[];
-  feeMode: X402IntentsFeeMode;
+  /** Optional allow-list over the facilitator's origins; undefined = all. */
+  origins?: X402IntentsOrigin[];
   getOrderContext: (orderId: string) => Promise<X402IntentsOrderContext | null>;
   recordQuote: (input: X402IntentsRecordQuoteInput) => Promise<X402IntentsOperation>;
   getOperation: (operationKey: string) => Promise<X402IntentsOperation | null>;

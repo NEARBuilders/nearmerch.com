@@ -109,7 +109,6 @@ export default createPlugin({
     X402_INTENTS_FACILITATOR_URL: z.string().optional(),
     X402_INTENTS_FACILITATOR_API_KEY: z.string().optional(),
     X402_INTENTS_ORIGINS: z.string().optional(),
-    X402_INTENTS_FEE_MODE: z.string().optional(),
   }),
 
   context: z.object({
@@ -277,9 +276,6 @@ export default createPlugin({
       }
       if (config.secrets.X402_INTENTS_ORIGINS) {
         process.env.X402_INTENTS_ORIGINS = config.secrets.X402_INTENTS_ORIGINS;
-      }
-      if (config.secrets.X402_INTENTS_FEE_MODE) {
-        process.env.X402_INTENTS_FEE_MODE = config.secrets.X402_INTENTS_FEE_MODE;
       }
 
       console.log("[Marketplace] Plugin initialized");

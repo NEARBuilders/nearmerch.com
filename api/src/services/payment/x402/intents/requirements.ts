@@ -2,14 +2,12 @@ import type { PaymentRequirements } from "@x402/core/types";
 import type { X402IntentsOrigin } from "../config";
 import {
   X402_INTENTS_ASSET_TRANSFER_METHOD,
+  X402_INTENTS_DEFAULT_MAX_TIMEOUT_SECONDS,
   X402_INTENTS_PAYMENT_FLOW,
   X402_SCHEME,
 } from "../constants";
 import type { X402IntentsQuoteExtra } from "./schema";
-import type { X402IntentsDestination, X402IntentsFeePlan } from "./types";
-
-/** Destination USDC on Base uses 6 decimals. */
-const DESTINATION_DECIMALS = 6;
+import type { X402IntentsDestination } from "./types";
 
 export function isX402IntentsRequirements(
   requirements: { extra?: Record<string, unknown> } | undefined,
@@ -27,58 +25,95 @@ export function x402IntentsOperationKey(
   return depositMemo ? `${base}:${depositMemo}` : base;
 }
 
-/**
- * Indicative origin amount for a USD-pegged origin: the order total (6-decimal
- * USDC) rescaled to the origin's decimals, rounded up. The binding amount is
- * the quoted amountIn.
- */
-export function x402IntentsIndicativeAmount(
-  totalAmount: string,
-  originDecimals: number,
-): string {
-  const total = BigInt(totalAmount);
-  if (originDecimals >= DESTINATION_DECIMALS) {
-    return (total * 10n ** BigInt(originDecimals - DESTINATION_DECIMALS)).toString();
-  }
-  const divisor = 10n ** BigInt(DESTINATION_DECIMALS - originDecimals);
-  return ((total + divisor - 1n) / divisor).toString();
+function sameAsset(network: string, a: string, b: string): boolean {
+  return network.startsWith("eip155:") ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-export function originMatches(
-  origin: X402IntentsOrigin,
+/** Whether an origin (network + asset) passes the X402_INTENTS_ORIGINS allow-list. */
+export function originAllowed(
+  allowList: ReadonlyArray<X402IntentsOrigin> | undefined,
   network: string,
   asset: string,
 ): boolean {
-  if (origin.network !== network) return false;
-  return network.startsWith("eip155:")
-    ? origin.asset.toLowerCase() === asset.toLowerCase()
-    : origin.asset === asset;
+  if (!allowList) return true;
+  return allowList.some(
+    (origin) =>
+      origin.network === network &&
+      (origin.asset === undefined || sameAsset(network, origin.asset, asset)),
+  );
 }
 
-/** Unquoted 402 entry: amount and payTo empty until the facilitator quotes. */
-export function buildX402IntentsUnquotedEntry(input: {
-  origin: X402IntentsOrigin;
-  destination: X402IntentsDestination;
-  feePlan: X402IntentsFeePlan;
-}): PaymentRequirements {
-  const { origin, destination, feePlan } = input;
+/** The offer entry a client picked, matched by origin network and asset. */
+export function findOffer(
+  offers: ReadonlyArray<PaymentRequirements>,
+  network: string,
+  asset: string,
+): PaymentRequirements | undefined {
+  return offers.find(
+    (offer) => offer.network === network && sameAsset(network, offer.asset, asset),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+export function readX402IntentsDestination(
+  requirements: { extra?: Record<string, unknown> } | undefined,
+): X402IntentsDestination | undefined {
+  const destination = requirements?.extra?.destination;
+  if (!isRecord(destination)) return undefined;
+  const { network, asset, amount, recipient } = destination;
+  if (
+    !nonEmptyString(network) ||
+    !nonEmptyString(asset) ||
+    !nonEmptyString(amount) ||
+    !nonEmptyString(recipient)
+  ) {
+    return undefined;
+  }
+  return { network, asset, amount, recipient };
+}
+
+/**
+ * Normalise one entry of the facilitator's unquoted `accepts[]`, or undefined
+ * when it is not a usable near-intents offer for `amountOut`. The destination
+ * (asset, recipient) comes from the facilitator, i.e. the Ping dashboard, and
+ * must be for exactly `amountOut`.
+ */
+export function normalizeX402IntentsOffer(
+  entry: unknown,
+  amountOut: string,
+): PaymentRequirements | undefined {
+  if (!isRecord(entry) || !isRecord(entry.extra)) return undefined;
+  if (entry.scheme !== X402_SCHEME) return undefined;
+  if (!nonEmptyString(entry.network) || !nonEmptyString(entry.asset)) return undefined;
+  if (entry.extra.assetTransferMethod !== X402_INTENTS_ASSET_TRANSFER_METHOD) return undefined;
+  const destination = readX402IntentsDestination(entry as { extra: Record<string, unknown> });
+  if (!destination || destination.amount !== amountOut) return undefined;
+
+  const timeout = entry.maxTimeoutSeconds;
+  const { description: _description, ...rest } = entry;
   return {
+    ...rest,
     scheme: X402_SCHEME,
-    network: origin.network as PaymentRequirements["network"],
+    network: entry.network as PaymentRequirements["network"],
+    asset: entry.asset,
     amount: "",
-    asset: origin.asset,
     payTo: "",
-    maxTimeoutSeconds: origin.maxTimeoutSeconds,
+    maxTimeoutSeconds:
+      typeof timeout === "number" && Number.isInteger(timeout) && timeout > 0
+        ? timeout
+        : X402_INTENTS_DEFAULT_MAX_TIMEOUT_SECONDS,
     extra: {
-      assetTransferMethod: X402_INTENTS_ASSET_TRANSFER_METHOD,
+      ...entry.extra,
       paymentFlow: X402_INTENTS_PAYMENT_FLOW,
-      indicativeAmount: x402IntentsIndicativeAmount(feePlan.totalAmount, origin.decimals),
-      destination,
-      ...(feePlan.mode === "app_fees" && feePlan.appFees
-        ? { appFees: feePlan.appFees }
-        : {}),
     },
-  };
+  } as PaymentRequirements;
 }
 
 /** Quoted entry returned in the second 402 (payTo = deposit address, amount = amountIn). */
@@ -96,5 +131,28 @@ export function buildX402IntentsQuotedEntry(
       operationToken: quote.operationToken,
       ...(quote.depositMemo ? { depositMemo: quote.depositMemo } : {}),
     },
+  };
+}
+
+/**
+ * Requirements for `/settle`: the recorded unquoted entry (our destination
+ * terms, never the client's) with the quoted instrument the client echoes
+ * back, like @pingpay/agentpay-middleware sends.
+ */
+export function buildX402IntentsSettleRequirements(
+  recorded: PaymentRequirements,
+  accepted: PaymentRequirements,
+  depositAddress: string,
+): PaymentRequirements {
+  const echoed = isRecord(accepted.extra) ? accepted.extra : {};
+  const instrument: Record<string, unknown> = {};
+  for (const key of ["refundDeadline", "operationToken", "depositMemo"] as const) {
+    if (nonEmptyString(echoed[key])) instrument[key] = echoed[key];
+  }
+  return {
+    ...recorded,
+    amount: nonEmptyString(accepted.amount) ? accepted.amount : recorded.amount,
+    payTo: depositAddress,
+    extra: { ...recorded.extra, ...instrument },
   };
 }

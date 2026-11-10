@@ -11,10 +11,10 @@ import type {
   PaymentRequirements,
   SettleResponse,
 } from "@x402/core/types";
-import type { X402IntentsOrigin } from "../config";
-import { getX402Network, getX402UsdcAddress } from "../config";
 import {
   X402_INTENTS_ERRORS,
+  X402_INTENTS_INCOMPLETE_DEPOSIT,
+  X402_INTENTS_NEAR_MAINNET,
   X402_INTENTS_QUOTE_RATE_LIMIT,
   X402_INTENTS_QUOTE_RATE_WINDOW_MS,
   X402_INTENTS_TERMINAL_SETTLE_ERRORS,
@@ -22,9 +22,11 @@ import {
 import { planX402IntentsFees } from "./fees";
 import {
   buildX402IntentsQuotedEntry,
-  buildX402IntentsUnquotedEntry,
+  buildX402IntentsSettleRequirements,
+  findOffer,
   isX402IntentsRequirements,
-  originMatches,
+  originAllowed,
+  readX402IntentsDestination,
   x402IntentsOperationKey,
 } from "./requirements";
 import {
@@ -47,7 +49,12 @@ export type X402IntentsResource = PaymentRequired["resource"];
 
 type IntentsMiddlewareOptions = {
   deps: X402IntentsPayDeps;
-  payTo: string;
+  /**
+   * true: Phase 1 (Base exact) runs after this middleware and owns the unpaid
+   * 402; intents entries are appended to it. false: intents-only, this
+   * middleware answers every request itself.
+   */
+  withPhase1: boolean;
   resource: (c: Context) => X402IntentsResource;
   /** Phase 1 success body; intents success responses use the same shape. */
   paidResponse: (c: Context, orderId: string) => Promise<Response>;
@@ -72,7 +79,7 @@ export function stripOperationToken<T>(value: T): T {
   return value;
 }
 
-function abort(c: Context, reason: string, status: 403 | 404 | 409 | 429 | 502 = 403) {
+function abort(c: Context, reason: string, status: 403 | 404 | 409 | 429 | 502 | 503 = 403) {
   c.header("Cache-Control", "no-store");
   return c.json({ error: reason }, status);
 }
@@ -106,23 +113,19 @@ export function createX402IntentsMiddleware(
     planX402IntentsFees({
       totalAmount: usdDollarsToUsdcAtomic(context.order.totalAmount),
       fees: context.fees,
-      mode: deps.feeMode,
     });
 
-  const unquotedEntry = (
-    origin: X402IntentsOrigin,
-    feePlan: X402IntentsFeePlan,
-  ): PaymentRequirements =>
-    buildX402IntentsUnquotedEntry({
-      origin,
-      feePlan,
-      destination: {
-        network: getX402Network(),
-        asset: getX402UsdcAddress(),
-        amount: feePlan.destinationAmount,
-        recipient: options.payTo,
-      },
-    });
+  /**
+   * Unquoted entries for this order from the facilitator (Ping `/offers`),
+   * filtered by the optional origin allow-list. The destination (asset,
+   * recipient on NEAR) comes from the Ping dashboard, never from code.
+   */
+  const offersFor = async (feePlan: X402IntentsFeePlan): Promise<PaymentRequirements[]> => {
+    const offers = await deps
+      .getFacilitator(deps.facilitatorUrl)
+      .offers(feePlan.destinationAmount);
+    return offers.filter((offer) => originAllowed(deps.origins, offer.network, offer.asset));
+  };
 
   const paymentRequired = (
     c: Context,
@@ -150,7 +153,7 @@ export function createX402IntentsMiddleware(
     return c.json(input.body ?? (input.error ? { error: input.error } : {}), 402);
   };
 
-  /** Add one unquoted near-intents entry per origin to Phase 1's unpaid 402. */
+  /** Add the facilitator's unquoted entries to Phase 1's unpaid 402. */
   const appendIntentsEntries = async (c: Context, orderId: string) => {
     const header = c.res.headers.get(PAYMENT_REQUIRED_HEADER);
     if (c.res.status !== 402 || !header) return;
@@ -162,19 +165,19 @@ export function createX402IntentsMiddleware(
       return;
     }
 
-    let context: X402IntentsOrderContext | null;
+    let entries: PaymentRequirements[];
     try {
-      context = await deps.getOrderContext(orderId);
+      const context = await deps.getOrderContext(orderId);
+      if (!context?.order.payable || context.order.settlePending || context.order.expired) {
+        return;
+      }
+      entries = await offersFor(feePlanFor(context));
     } catch (error) {
-      console.error("[x402-intents] order lookup failed; serving Phase 1 only", error);
+      console.error("[x402-intents] offers unavailable; serving Phase 1 only", error);
       return;
     }
-    if (!context?.order.payable || context.order.settlePending || context.order.expired) {
-      return;
-    }
+    if (entries.length === 0) return;
 
-    const feePlan = feePlanFor(context);
-    const entries = deps.origins.map((origin) => unquotedEntry(origin, feePlan));
     c.res.headers.set(
       PAYMENT_REQUIRED_HEADER,
       encodePaymentRequiredHeader({
@@ -184,11 +187,34 @@ export function createX402IntentsMiddleware(
     );
   };
 
+  /** Intents-only unpaid 402 (no Base pay-to configured). */
+  const handleUnpaid = async (c: Context, orderId: string, error?: string) => {
+    const context = await deps.getOrderContext(orderId);
+    if (!context) return abort(c, "order_not_found");
+    const { order } = context;
+    if (order.alreadyPaid) return options.paidResponse(c, orderId);
+    if (order.expired) return abort(c, "expired");
+    if (order.settlePending) return abort(c, X402_INTENTS_ERRORS.settlementPending);
+    if (!order.payable) return abort(c, "order_not_payable");
+
+    let entries: PaymentRequirements[];
+    try {
+      entries = await offersFor(feePlanFor(context));
+    } catch (failure) {
+      console.error("[x402-intents] offers unavailable", failure);
+      return abort(c, "intents_unavailable", 503);
+    }
+    if (entries.length === 0) {
+      console.error("[x402-intents] facilitator returned no usable offer");
+      return abort(c, "intents_unavailable", 503);
+    }
+    return paymentRequired(c, { ...(error ? { error } : {}), accepts: entries });
+  };
+
   const handleQuote = async (
     c: Context,
     orderId: string,
     payload: PaymentPayload,
-    origin: X402IntentsOrigin,
     context: X402IntentsOrderContext,
   ) => {
     const { order } = context;
@@ -198,10 +224,22 @@ export function createX402IntentsMiddleware(
     if (!order.payable) return abort(c, "order_not_payable");
 
     const feePlan = feePlanFor(context);
-    const unquoted = unquotedEntry(origin, feePlan);
+    let offers: PaymentRequirements[];
+    try {
+      offers = await offersFor(feePlan);
+    } catch (error) {
+      console.error("[x402-intents] offers unavailable", error);
+      return abort(c, "facilitator_unavailable", 502);
+    }
+
+    // The server's own entry for the chosen origin, never the client's `accepted`.
+    const unquoted = findOffer(offers, payload.accepted.network, payload.accepted.asset);
+    if (!unquoted) {
+      return paymentRequired(c, { error: "invalid_network", accepts: offers });
+    }
 
     const quote = X402IntentsQuotePayloadSchema.safeParse(payload.payload);
-    if (!quote.success || !isValidOriginAddress(origin.network, quote.data.refundTo)) {
+    if (!quote.success || !isValidOriginAddress(unquoted.network, quote.data.refundTo)) {
       return paymentRequired(c, { error: "invalid_payload", accepts: [unquoted] });
     }
 
@@ -236,19 +274,19 @@ export function createX402IntentsMiddleware(
       await deps.recordQuote({
         orderId,
         operationKey: x402IntentsOperationKey(
-          origin.network,
+          unquoted.network,
           quoteExtra.depositAddress,
           quoteExtra.depositMemo,
         ),
-        originNetwork: origin.network,
-        originAsset: origin.asset,
+        originNetwork: unquoted.network,
+        originAsset: unquoted.asset,
         depositAddress: quoteExtra.depositAddress,
         depositMemo: quoteExtra.depositMemo,
         facilitatorUrl: deps.facilitatorUrl,
         requirements: unquoted as unknown as Record<string, unknown>,
         feePlan: feePlan as unknown as Record<string, unknown>,
         refundDeadline: new Date(quoteExtra.refundDeadline).toISOString(),
-        maxTimeoutSeconds: origin.maxTimeoutSeconds,
+        maxTimeoutSeconds: unquoted.maxTimeoutSeconds,
       });
     } catch (error) {
       // Never hand out a deposit address we could not record.
@@ -293,7 +331,6 @@ export function createX402IntentsMiddleware(
     c: Context,
     orderId: string,
     payload: PaymentPayload,
-    origin: X402IntentsOrigin | undefined,
     context: X402IntentsOrderContext,
   ) => {
     const parsed = X402IntentsDepositPayloadSchema.safeParse(payload.payload);
@@ -337,8 +374,8 @@ export function createX402IntentsMiddleware(
         return abort(c, X402_INTENTS_ERRORS.settlementPending);
       }
     } else {
-      // No record: fall back to the current configuration (spec #3370).
-      if (!origin) {
+      // No record: fall back to the current offer for this origin (spec #3370).
+      if (!originAllowed(deps.origins, network, payload.accepted.asset)) {
         return paymentRequired(c, { error: "invalid_network", accepts: [] });
       }
       if (order.alreadyPaid) return options.paidResponse(c, orderId);
@@ -347,18 +384,28 @@ export function createX402IntentsMiddleware(
       if (!order.payable) return abort(c, "order_not_payable");
 
       const feePlan = feePlanFor(context);
+      let offer: PaymentRequirements | undefined;
+      try {
+        offer = findOffer(await offersFor(feePlan), network, payload.accepted.asset);
+      } catch (error) {
+        console.error("[x402-intents] offers unavailable", error);
+        return abort(c, "facilitator_unavailable", 502);
+      }
+      if (!offer) {
+        return paymentRequired(c, { error: "invalid_network", accepts: [] });
+      }
       try {
         operation = await deps.recordQuote({
           orderId,
           operationKey,
-          originNetwork: origin.network,
-          originAsset: origin.asset,
+          originNetwork: offer.network,
+          originAsset: offer.asset,
           depositAddress: deposit.depositAddress,
           depositMemo: deposit.depositMemo,
           facilitatorUrl: deps.facilitatorUrl,
-          requirements: unquotedEntry(origin, feePlan) as unknown as Record<string, unknown>,
+          requirements: offer as unknown as Record<string, unknown>,
           feePlan: feePlan as unknown as Record<string, unknown>,
-          maxTimeoutSeconds: origin.maxTimeoutSeconds,
+          maxTimeoutSeconds: offer.maxTimeoutSeconds,
         });
       } catch (error) {
         console.error("[x402-intents] failed to record operation", error);
@@ -370,16 +417,15 @@ export function createX402IntentsMiddleware(
     }
 
     const requirements = operation.requirements as unknown as PaymentRequirements;
-    const destination = (requirements.extra?.destination ?? {}) as {
-      network?: string;
-      amount?: string;
-    };
+    const destination = readX402IntentsDestination(requirements);
+    const facilitator = deps.getFacilitator(operation.facilitatorUrl);
 
     let settle: SettleResponse;
     try {
-      settle = await deps
-        .getFacilitator(operation.facilitatorUrl)
-        .settle(payload, requirements);
+      settle = await facilitator.settle(
+        payload,
+        buildX402IntentsSettleRequirements(requirements, payload.accepted, deposit.depositAddress),
+      );
     } catch (error) {
       // Transport failure: no state change; the client retries the same payload.
       console.error("[x402-intents] facilitator settle failed", error);
@@ -389,7 +435,13 @@ export function createX402IntentsMiddleware(
     const receipt = stripOperationToken(settle) as unknown as Record<string, unknown>;
 
     if (settle.success) {
-      if (settle.network !== destination.network || settle.amount !== destination.amount) {
+      // Ping's receipt for Intents settlement is the NEAR tx on near:mainnet;
+      // public settlement reports the destination network. The amount, when
+      // reported, must be the exact destination amount we offered.
+      const networkMatches =
+        settle.network === destination?.network || settle.network === X402_INTENTS_NEAR_MAINNET;
+      const amountMatches = !settle.amount || settle.amount === destination?.amount;
+      if (!destination || !settle.transaction || !networkMatches || !amountMatches) {
         console.error("[x402-intents] settle receipt does not match the destination", {
           operationKey,
           network: settle.network,
@@ -405,7 +457,7 @@ export function createX402IntentsMiddleware(
           transaction: settle.transaction,
           payer: settle.payer,
           network: settle.network,
-          amount: settle.amount,
+          amount: settle.amount || destination.amount,
           originNetwork:
             typeof extra.originNetwork === "string" ? extra.originNetwork : network,
           originTxHash:
@@ -422,6 +474,10 @@ export function createX402IntentsMiddleware(
       }
       if (result.outcome === "order_not_payable") {
         return abort(c, "order_not_payable", 409);
+      }
+
+      if (result.outcome === "settled") {
+        await claimExecution(facilitator, operationKey, deposit.depositAddress);
       }
 
       c.header(
@@ -449,11 +505,19 @@ export function createX402IntentsMiddleware(
     }
 
     const reason = settle.errorReason ?? "unexpected_settle_error";
+    const status = (settle.extra as { status?: unknown } | undefined)?.status;
 
-    if (reason === X402_INTENTS_ERRORS.settlementPending) {
-      await deps.failOperation({ operationKey, errorReason: reason, pending: true, settleResponse: receipt });
+    // Still processing, or a short deposit (INCOMPLETE_DEPOSIT): the challenge
+    // stays active; top up the same deposit address and retry the same token.
+    if (reason === X402_INTENTS_ERRORS.settlementPending || status === X402_INTENTS_INCOMPLETE_DEPOSIT) {
+      await deps.failOperation({
+        operationKey,
+        errorReason: X402_INTENTS_ERRORS.settlementPending,
+        pending: true,
+        settleResponse: receipt,
+      });
       return paymentRequired(c, {
-        error: reason,
+        error: X402_INTENTS_ERRORS.settlementPending,
         accepts: [requirements],
         settleResponse: receipt,
       });
@@ -485,6 +549,27 @@ export function createX402IntentsMiddleware(
     });
   };
 
+  /**
+   * Best-effort Ping `/execution` claim after we recorded the payment, so
+   * Ping's dashboard shows the challenge as consumed. Our own operation
+   * record is what guarantees one fulfillment; a failed claim is only logged.
+   */
+  const claimExecution = async (
+    facilitator: ReturnType<X402IntentsPayDeps["getFacilitator"]>,
+    operationKey: string,
+    depositAddress: string,
+  ) => {
+    if (!facilitator.claimExecution) return;
+    try {
+      const claimed = await facilitator.claimExecution(depositAddress);
+      if (claimed === false) {
+        console.warn("[x402-intents] facilitator did not grant the execution claim", { operationKey });
+      }
+    } catch (error) {
+      console.warn("[x402-intents] execution claim failed", { operationKey, error });
+    }
+  };
+
   return async (c, next) => {
     if (c.req.method !== "POST") return next();
     const orderId = c.req.param("id");
@@ -492,20 +577,35 @@ export function createX402IntentsMiddleware(
 
     const header = getPaymentHeader(c);
     if (!header) {
+      if (!options.withPhase1) {
+        try {
+          return await handleUnpaid(c, orderId);
+        } catch (error) {
+          console.error("[x402-intents] host API call failed", error);
+          return abort(c, "intents_unavailable", 502);
+        }
+      }
       await next();
       await appendIntentsEntries(c, orderId);
       return;
     }
 
-    let payload: PaymentPayload;
+    let payload: PaymentPayload | undefined;
     try {
       payload = decodePaymentSignatureHeader(header);
     } catch {
-      return next();
+      payload = undefined;
     }
 
-    if (!isX402IntentsRequirements(payload.accepted)) {
-      return next();
+    if (!payload || !isX402IntentsRequirements(payload.accepted)) {
+      if (options.withPhase1) return next();
+      // Intents-only: nothing else can pay; answer with the intents offers.
+      try {
+        return await handleUnpaid(c, orderId, "unsupported_scheme");
+      } catch (error) {
+        console.error("[x402-intents] host API call failed", error);
+        return abort(c, "intents_unavailable", 502);
+      }
     }
 
     if (payload.x402Version !== 2) {
@@ -520,20 +620,17 @@ export function createX402IntentsMiddleware(
       const context = await deps.getOrderContext(orderId);
       if (!context) return abort(c, "order_not_found");
 
-      const origin = deps.origins.find((candidate) =>
-        originMatches(candidate, payload.accepted.network, payload.accepted.asset),
-      );
       const type = (payload.payload as { type?: unknown } | undefined)?.type;
 
       if (type === "quote") {
-        if (!origin) {
+        if (!originAllowed(deps.origins, payload.accepted.network, payload.accepted.asset)) {
           return paymentRequired(c, { error: "invalid_network", accepts: [] });
         }
-        return await handleQuote(c, orderId, payload, origin, context);
+        return await handleQuote(c, orderId, payload, context);
       }
 
       if (type === "deposit") {
-        return await handleDeposit(c, orderId, payload, origin, context);
+        return await handleDeposit(c, orderId, payload, context);
       }
 
       return paymentRequired(c, { error: "invalid_payload", accepts: [] });

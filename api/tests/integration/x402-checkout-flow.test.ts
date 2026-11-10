@@ -353,7 +353,42 @@ describe('x402 checkout flow', () => {
     expect(order.order.status).toBe('payment_pending');
   });
 
-  it('does not create an x402 order when pay-to is missing', async () => {
+  it('does not create an x402 order when pay-to is missing and near-intents is off', async () => {
+    const client = await getPluginClient({ nearAccountId: TEST_USER });
+    const quoteResult = await client.quote({
+      items: mockCartItems,
+      shippingAddress: mockShippingAddress,
+    });
+    const selectedRates: Record<string, string> = {};
+    quoteResult.providerBreakdown.forEach((provider) => {
+      selectedRates[provider.provider] = provider.selectedShipping.rateId;
+    });
+
+    const previous = process.env.X402_PAY_TO_ADDRESS;
+    const previousIntents = process.env.X402_INTENTS_ENABLED;
+    process.env.X402_PAY_TO_ADDRESS = '';
+    process.env.X402_INTENTS_ENABLED = 'false';
+
+    try {
+      await expect(
+        client.createCheckout({
+          items: mockCartItems,
+          shippingAddress: mockShippingAddress,
+          selectedRates,
+          shippingCost: quoteResult.shippingCost,
+          successUrl: 'https://example.com/success',
+          cancelUrl: 'https://example.com/cancel',
+          paymentProvider: 'x402',
+        }),
+      ).rejects.toThrow(/pay-to/i);
+    } finally {
+      process.env.X402_PAY_TO_ADDRESS = previous;
+      if (previousIntents === undefined) delete process.env.X402_INTENTS_ENABLED;
+      else process.env.X402_INTENTS_ENABLED = previousIntents;
+    }
+  });
+
+  it('creates an x402 order without a Base pay-to when near-intents is on (default)', async () => {
     const client = await getPluginClient({ nearAccountId: TEST_USER });
     const quoteResult = await client.quote({
       items: mockCartItems,
@@ -368,17 +403,17 @@ describe('x402 checkout flow', () => {
     process.env.X402_PAY_TO_ADDRESS = '';
 
     try {
-      await expect(
-        client.createCheckout({
-          items: mockCartItems,
-          shippingAddress: mockShippingAddress,
-          selectedRates,
-          shippingCost: quoteResult.shippingCost,
-          successUrl: 'https://example.com/success',
-          cancelUrl: 'https://example.com/cancel',
-          paymentProvider: 'x402',
-        }),
-      ).rejects.toThrow(/pay-to/i);
+      const checkout = await client.createCheckout({
+        items: mockCartItems,
+        shippingAddress: mockShippingAddress,
+        selectedRates,
+        shippingCost: quoteResult.shippingCost,
+        successUrl: 'https://example.com/success',
+        cancelUrl: 'https://example.com/cancel',
+        paymentProvider: 'x402',
+      });
+      const order = await client.getOrder({ id: checkout.orderId });
+      expect(order.order.status).toBe('payment_pending');
     } finally {
       process.env.X402_PAY_TO_ADDRESS = previous;
     }

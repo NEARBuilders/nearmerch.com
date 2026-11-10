@@ -1,7 +1,6 @@
 import {
   getX402IntentsFacilitatorApiKey,
   getX402IntentsFacilitatorUrl,
-  getX402IntentsFeeMode,
   getX402IntentsOrigins,
   isX402IntentsActive,
 } from "../config";
@@ -25,11 +24,11 @@ export type X402IntentsPluginClient = {
  */
 export function createX402IntentsPayDeps(
   client: X402IntentsPluginClient,
-  options: { fetch?: typeof fetch } = {},
+  options: { fetch?: typeof fetch; now?: () => number } = {},
 ): X402IntentsPayDeps | null {
   if (!isX402IntentsActive()) return null;
 
-  const facilitatorUrl = getX402IntentsFacilitatorUrl()!;
+  const facilitatorUrl = getX402IntentsFacilitatorUrl();
   const apiKey = getX402IntentsFacilitatorApiKey();
   const facilitators = new Map<string, X402IntentsFacilitator>();
 
@@ -42,13 +41,13 @@ export function createX402IntentsPayDeps(
           url,
           apiKey: url === facilitatorUrl ? apiKey : undefined,
           fetch: options.fetch,
+          now: options.now,
         });
         facilitators.set(url, facilitator);
       }
       return facilitator;
     },
     origins: getX402IntentsOrigins().origins,
-    feeMode: getX402IntentsFeeMode(),
     getOrderContext: (orderId) =>
       client.getX402IntentsOrder({ orderId }) as ReturnType<X402IntentsPayDeps["getOrderContext"]>,
     recordQuote: (input) =>

@@ -21,9 +21,8 @@ import { CheckoutError } from "./checkout/errors";
 import { getProvidersAddressRequirementError } from "./checkout/provider-address-requirements";
 import { aggregateCheckoutFees } from "./checkout/fees";
 import {
-  getX402PayToAddress,
-  isX402Enabled,
-  isX402IntentsEnabled,
+  getX402CheckoutUnavailableReason,
+  isX402IntentsConfigured,
 } from "./payment/x402";
 
 
@@ -661,15 +660,11 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
             } = params;
 
             if (params.paymentProvider === "x402") {
-              if (!isX402Enabled()) {
-                return yield* Effect.fail(
-                  new Error("x402 payments are not enabled"),
-                );
-              }
-              if (!getX402PayToAddress()) {
-                return yield* Effect.fail(
-                  new Error("x402 pay-to address is not configured"),
-                );
+              // Base exact needs X402_PAY_TO_ADDRESS; without it the order is
+              // paid through the near-intents path only.
+              const unavailable = getX402CheckoutUnavailableReason();
+              if (unavailable) {
+                return yield* Effect.fail(new Error(unavailable));
               }
             }
 
@@ -973,7 +968,7 @@ export const CheckoutServiceLive = (runtime: MarketplaceRuntime) =>
                     : undefined,
                 // Splits for the near-intents path (#238); omitted when it is off
                 // so Phase 1 orders keep the same paymentDetails shape.
-                fees: isX402IntentsEnabled()
+                fees: isX402IntentsConfigured()
                   ? aggregateCheckoutFees({
                       itemFees: allItems.map((pi) => pi.metadata?.fees),
                       referralFees: referralFeeDetails,

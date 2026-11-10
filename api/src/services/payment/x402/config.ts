@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "every-plugin/zod";
 import {
-  X402_INTENTS_DEFAULT_MAX_TIMEOUT_SECONDS,
+  X402_INTENTS_DEFAULT_FACILITATOR_URL,
   X402_NETWORK,
   X402_NETWORK_MAINNET,
   X402_NETWORK_SEPOLIA,
@@ -82,81 +82,74 @@ export function x402HostSecretMatches(reqHeaders?: Headers): boolean {
   return timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
-function isTruthyEnv(value: string | undefined): boolean {
+function isFalsyEnv(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
-  return normalized === "true" || normalized === "1" || normalized === "yes";
+  return normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off";
 }
-
-/** Phase 2 near-intents upfront path (issue #238). Off unless explicitly enabled. */
-export function isX402IntentsEnabled(): boolean {
-  return isTruthyEnv(process.env.X402_INTENTS_ENABLED);
-}
-
-export function getX402IntentsFacilitatorUrl(): string | undefined {
-  const value = process.env.X402_INTENTS_FACILITATOR_URL?.trim();
-  return value || undefined;
-}
-
-export function getX402IntentsFacilitatorApiKey(): string | undefined {
-  const value = process.env.X402_INTENTS_FACILITATOR_API_KEY?.trim();
-  return value || undefined;
-}
-
-export type X402IntentsFeeMode = "out_of_band" | "app_fees";
 
 /**
- * How royalty/affiliate splits are settled on intents payments.
- * - out_of_band (default): merchant receives the full total on Base; splits are
- *   recorded on the order for reconciliation, exactly like Phase 1.
- * - app_fees: splits are passed as 1Click appFees (bps of amountIn) and the
- *   destination amount is reduced by the same amounts. Requires a facilitator
- *   that forwards `extra.appFees`; falls back to out_of_band when the split
- *   cannot be expressed as appFees (cap, recipient format).
+ * Near-intents path (issue #238). On by default, but nothing x402 is mounted
+ * unless X402_ENABLED (the master switch) is also on.
  */
-export function getX402IntentsFeeMode(): X402IntentsFeeMode {
-  const value = process.env.X402_INTENTS_FEE_MODE?.trim().toLowerCase();
-  return value === "app_fees" ? "app_fees" : "out_of_band";
+export function isX402IntentsEnabled(): boolean {
+  return !isFalsyEnv(process.env.X402_INTENTS_ENABLED);
+}
+
+/** Facilitator base URL; defaults to Ping Agent Pay (production). */
+export function getX402IntentsFacilitatorUrl(): string {
+  const value = process.env.X402_INTENTS_FACILITATOR_URL?.trim();
+  return (value || X402_INTENTS_DEFAULT_FACILITATOR_URL).replace(/\/+$/, "");
+}
+
+function isPingFacilitatorUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === "pingpay.io" || host.endsWith(".pingpay.io");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * API key sent as X-Api-Key. X402_INTENTS_FACILITATOR_API_KEY wins; otherwise
+ * the Ping checkout key (PING_API_KEY, same organization) is reused, but only
+ * when the facilitator is a Ping host so it is never sent anywhere else.
+ */
+export function getX402IntentsFacilitatorApiKey(): string | undefined {
+  const value = process.env.X402_INTENTS_FACILITATOR_API_KEY?.trim();
+  if (value) return value;
+  const ping = process.env.PING_API_KEY?.trim();
+  return ping && isPingFacilitatorUrl(getX402IntentsFacilitatorUrl()) ? ping : undefined;
 }
 
 const CAIP2_PATTERN = /^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$/;
 
-export const X402IntentsOriginSchema = z.object({
-  network: z.string().regex(CAIP2_PATTERN),
-  asset: z.string().min(1),
-  decimals: z.number().int().min(0).max(36),
-  maxTimeoutSeconds: z
-    .number()
-    .int()
-    .positive()
-    .default(X402_INTENTS_DEFAULT_MAX_TIMEOUT_SECONDS),
-  /** USD-pegged stablecoin: indicativeAmount is derived from the USD total. */
-  usdPegged: z.boolean().default(false),
-});
+/** One allow-list entry: a CAIP-2 network, optionally narrowed to one asset. */
+export const X402IntentsOriginSchema = z.union([
+  z.string().regex(CAIP2_PATTERN).transform((network) => ({ network })),
+  z.object({
+    network: z.string().regex(CAIP2_PATTERN),
+    asset: z.string().min(1).optional(),
+  }),
+]);
 
-export type X402IntentsOrigin = z.infer<typeof X402IntentsOriginSchema>;
+export type X402IntentsOrigin = { network: string; asset?: string };
 
 export type X402IntentsOriginsResult = {
-  origins: X402IntentsOrigin[];
+  /** undefined: offer every origin the facilitator returns. */
+  origins: X402IntentsOrigin[] | undefined;
   errors: string[];
 };
 
-function isBaseUsdcOrigin(origin: X402IntentsOrigin): boolean {
-  return (
-    origin.network === X402_NETWORK_MAINNET &&
-    origin.asset.toLowerCase() === X402_USDC_BASE_MAINNET.toLowerCase()
-  );
-}
-
 /**
- * X402_INTENTS_ORIGINS: JSON array of origins offered as near-intents entries,
- * e.g. [{"network":"eip155:42161","asset":"0xaf88…5831","decimals":6,"maxTimeoutSeconds":300,"usdPegged":true}].
- * Base USDC is never an origin (Phase 1 exact covers it). Origins without a
- * price source (usdPegged=false) are skipped: indicativeAmount can't be derived.
+ * X402_INTENTS_ORIGINS (optional): allow-list over the origins the facilitator
+ * offers, e.g. ["eip155:8453", {"network":"eip155:42161","asset":"0xaf88…5831"}].
+ * Unset: every origin Ping offers. Set but with no valid entry: none (fail closed).
  */
 export function getX402IntentsOrigins(): X402IntentsOriginsResult {
   const raw = process.env.X402_INTENTS_ORIGINS?.trim();
   if (!raw) {
-    return { origins: [], errors: [] };
+    return { origins: undefined, errors: [] };
   }
 
   let parsed: unknown;
@@ -180,21 +173,13 @@ export function getX402IntentsOrigins(): X402IntentsOriginsResult {
       errors.push(`X402_INTENTS_ORIGINS[${index}] is invalid`);
       return;
     }
-
-    const origin = result.data;
-    if (isBaseUsdcOrigin(origin)) {
-      errors.push(`X402_INTENTS_ORIGINS[${index}] is Base USDC (served by Phase 1 exact)`);
-      return;
-    }
-
-    if (!origin.usdPegged) {
-      errors.push(`X402_INTENTS_ORIGINS[${index}] has no indicative price source (usdPegged=false)`);
-      return;
-    }
-
-    const key = `${origin.network}:${origin.asset.toLowerCase()}`;
+    const data: X402IntentsOrigin = result.data;
+    const origin: X402IntentsOrigin = data.asset
+      ? { network: data.network, asset: data.asset }
+      : { network: data.network };
+    const key = `${origin.network}:${origin.asset?.toLowerCase() ?? "*"}`;
     if (seen.has(key)) {
-      errors.push(`X402_INTENTS_ORIGINS[${index}] duplicates ${origin.network} ${origin.asset}`);
+      errors.push(`X402_INTENTS_ORIGINS[${index}] is a duplicate`);
       return;
     }
     seen.add(key);
@@ -205,20 +190,23 @@ export function getX402IntentsOrigins(): X402IntentsOriginsResult {
 }
 
 /**
- * Why the intents path is inactive, or null when it is fully configured.
- * Requires the Phase 1 config (X402_ENABLED, pay-to, host secret) and Base
- * mainnet: there is no near-intents testnet (ADR 0001).
+ * Flags and host secret only (no facilitator key): what the API needs to accept
+ * x402 orders that only the intents path can pay.
  */
+export function isX402IntentsConfigured(): boolean {
+  return isX402Enabled() && isX402IntentsEnabled() && Boolean(getX402HostSecret());
+}
+
+/** Why the intents path is inactive, or null when it can be mounted. */
 export function getX402IntentsInactiveReason(): string | null {
-  if (!isX402IntentsEnabled()) return "X402_INTENTS_ENABLED is off";
   if (!isX402Enabled()) return "X402_ENABLED is off";
-  if (!getX402PayToAddress()) return "X402_PAY_TO_ADDRESS is missing";
+  if (!isX402IntentsEnabled()) return "X402_INTENTS_ENABLED is off";
   if (!getX402HostSecret()) return "X402_HOST_SECRET is missing";
-  if (getX402Network() !== X402_NETWORK_MAINNET) {
-    return "near-intents requires X402_NETWORK=eip155:8453 (no intents testnet)";
+  if (!getX402IntentsFacilitatorApiKey()) {
+    return "X402_INTENTS_FACILITATOR_API_KEY (or PING_API_KEY) is missing";
   }
-  if (!getX402IntentsFacilitatorUrl()) return "X402_INTENTS_FACILITATOR_URL is missing";
-  if (getX402IntentsOrigins().origins.length === 0) {
+  const { origins } = getX402IntentsOrigins();
+  if (origins && origins.length === 0) {
     return "X402_INTENTS_ORIGINS has no usable origin";
   }
   return null;
@@ -226,4 +214,16 @@ export function getX402IntentsInactiveReason(): string | null {
 
 export function isX402IntentsActive(): boolean {
   return getX402IntentsInactiveReason() === null;
+}
+
+/**
+ * Why an x402 order can't be created, or null. Base `exact` needs
+ * X402_PAY_TO_ADDRESS; without it the intents path must be configured.
+ */
+export function getX402CheckoutUnavailableReason(): string | null {
+  if (!isX402Enabled()) return "x402 payments are not enabled";
+  if (!getX402PayToAddress() && !isX402IntentsConfigured()) {
+    return "x402 pay-to address is not configured and near-intents is off";
+  }
+  return null;
 }

@@ -43,3 +43,52 @@ export const X402_USDC_EXTRA = X402_USDC_EXTRA_MAINNET;
 export const X402_MAX_TIMEOUT_SECONDS = 900;
 
 export const X402_PAY_PATH_PATTERN = "POST /orders/:id/pay";
+
+/** `extra.assetTransferMethod` for the near-intents upfront path (x402 #3370). */
+export const X402_INTENTS_ASSET_TRANSFER_METHOD = "near-intents" as const;
+
+export const X402_INTENTS_PAYMENT_FLOW = "upfront" as const;
+
+/**
+ * A recorded intents operation stays redeemable until its refundDeadline plus
+ * this grace window, so a delayed `settlement_pending` retry is never stranded
+ * by the 900 s Phase 1 quote window (ADR 0001).
+ */
+export const X402_INTENTS_OPERATION_GRACE_SECONDS = 24 * 60 * 60;
+
+/** `maxTimeoutSeconds` for an offer entry that omits it. */
+export const X402_INTENTS_DEFAULT_MAX_TIMEOUT_SECONDS = 3600;
+
+/** Ping Agent Pay x402 facilitator (production). Staging: https://staging.pingpay.io/agentpay/x402 */
+export const X402_INTENTS_DEFAULT_FACILITATOR_URL = "https://pay.pingpay.io/agentpay/x402";
+
+/** Unquoted offers are cached per amountOut for this long (they carry no deposit address). */
+export const X402_INTENTS_OFFERS_CACHE_MS = 60 * 1000;
+
+/** Receipt network when Ping settles through NEAR Intents (NEAR tx hash). */
+export const X402_INTENTS_NEAR_MAINNET = "near:mainnet" as const;
+
+/** 1Click status for a short deposit: top up the same address and retry settle. */
+export const X402_INTENTS_INCOMPLETE_DEPOSIT = "INCOMPLETE_DEPOSIT" as const;
+
+/** Quote requests allowed per order per window (each quote mints a deposit address). */
+export const X402_INTENTS_QUOTE_RATE_LIMIT = 10;
+export const X402_INTENTS_QUOTE_RATE_WINDOW_MS = 10 * 60 * 1000;
+
+export const X402_INTENTS_ERRORS = {
+  settlementPending: "settlement_pending",
+  quoteUnavailable: "invalid_exact_near_intents_quote_unavailable",
+  tokenInvalid: "invalid_exact_near_intents_token_invalid",
+  tokenExpired: "invalid_exact_near_intents_token_expired",
+  quoteMismatch: "invalid_exact_near_intents_quote_mismatch",
+  depositNotFound: "invalid_exact_near_intents_deposit_not_found",
+  paymentFailed: "exact_near_intents_payment_failed",
+  insufficientDeposit: "exact_near_intents_insufficient_deposit",
+  operationExecuted: "exact_near_intents_operation_executed",
+} as const;
+
+/** Settle failures that are terminal for the order (payment_failed). */
+export const X402_INTENTS_TERMINAL_SETTLE_ERRORS: ReadonlySet<string> = new Set([
+  X402_INTENTS_ERRORS.paymentFailed,
+  X402_INTENTS_ERRORS.insufficientDeposit,
+]);

@@ -378,6 +378,87 @@ export const X402FailInputSchema = z.object({
 
 export type X402PayOrder = z.infer<typeof X402PayOrderSchema>;
 
+const X402JsonObjectSchema = z.record(z.string(), z.unknown());
+
+export const X402IntentsOperationSchema = z.object({
+  operationKey: z.string(),
+  orderId: z.string(),
+  originNetwork: z.string(),
+  originAsset: z.string(),
+  depositAddress: z.string(),
+  depositMemo: z.string().nullable(),
+  facilitatorUrl: z.string(),
+  requirements: X402JsonObjectSchema,
+  feePlan: X402JsonObjectSchema,
+  refundDeadline: z.string().nullable(),
+  expiresAt: z.string(),
+  state: z.enum(["quoted", "pending", "settling", "executed", "failed"]),
+  settleResponse: X402JsonObjectSchema.nullable(),
+  lastErrorReason: z.string().nullable(),
+  duplicate: z.boolean(),
+});
+
+export const X402IntentsOrderContextSchema = z.object({
+  order: X402PayOrderSchema,
+  fees: z.array(FeeConfigSchema),
+});
+
+export const X402IntentsRecordQuoteInputSchema = z.object({
+  orderId: z.string().min(1),
+  operationKey: z.string().min(1).max(1200),
+  originNetwork: z.string().min(1),
+  originAsset: z.string().min(1),
+  depositAddress: z.string().min(1).max(512),
+  depositMemo: z.string().min(1).max(512).optional(),
+  facilitatorUrl: z.string().url(),
+  requirements: X402JsonObjectSchema,
+  feePlan: X402JsonObjectSchema,
+  refundDeadline: z.string().datetime({ offset: true }).optional(),
+  maxTimeoutSeconds: z.number().int().positive(),
+});
+
+export const X402IntentsOperationKeyInputSchema = z.object({
+  operationKey: z.string().min(1).max(1200),
+});
+
+export const X402IntentsSettleInputSchema = z.object({
+  operationKey: z.string().min(1).max(1200),
+  settlement: z.object({
+    transaction: z.string().min(1),
+    payer: z.string().optional(),
+    network: z.string().min(1),
+    amount: z.string().optional(),
+    originNetwork: z.string().min(1),
+    originTxHash: z.string().min(1),
+  }),
+  settleResponse: X402JsonObjectSchema,
+});
+
+export const X402IntentsSettleOutputSchema = z.object({
+  outcome: z.enum([
+    "settled",
+    "duplicate",
+    "already_executed",
+    "in_progress",
+    "failed",
+    "order_not_payable",
+  ]),
+  order: X402PayOrderSchema.nullable(),
+  operation: X402IntentsOperationSchema,
+});
+
+export const X402IntentsFailInputSchema = z.object({
+  operationKey: z.string().min(1).max(1200),
+  errorReason: z.string().min(1),
+  pending: z.boolean(),
+  settleResponse: X402JsonObjectSchema,
+});
+
+export const X402IntentsFailOutputSchema = z.object({
+  order: X402PayOrderSchema.nullable(),
+  operation: X402IntentsOperationSchema,
+});
+
 export const WebhookResponseSchema = z.object({
   received: z.boolean(),
 });

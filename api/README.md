@@ -67,17 +67,55 @@ This host speaks **x402 v2**. Use `@x402/fetch` (not the v1 `x402-fetch` package
 ### Environment
 
 ```
-X402_ENABLED=true
+X402_ENABLED=true                      # master switch, default false: nothing x402 is mounted when off
+X402_HOST_SECRET=replace-me
+# Base USDC `exact` (eip3009) is offered only when a Base pay-to is set (dev / Base Sepolia):
 X402_PAY_TO_ADDRESS=0xYourStoreTreasuryOnBase
 X402_FACILITATOR_URL=https://facilitator.example
-X402_HOST_SECRET=replace-me
+X402_NETWORK=eip155:84532
 ```
+
+Without `X402_PAY_TO_ADDRESS`, `POST /orders/{id}/pay` is mounted for the near-intents path only (below), and x402 checkouts are accepted only while that path is on.
 
 `checkout.totalAmount` is USD **dollars**. The 402 amount is 6-decimal USDC atomic units: `round(totalAmount * 100) * 10_000` (USD cents × 10⁴). Do not treat `totalAmount` as cents.
 
 `X402_HOST_SECRET` is a host-only shared secret for internal settle helpers. Buyers never send it.
 
-Cross-chain payments through NEAR Intents (`near-intents`) are not implemented yet. For the planned design, facilitator decision and go/no-go, see [ADR 0001](../docs/adr/0001-x402-near-intents-facilitator.md).
+### Paying from another chain (`near-intents` via Ping Agent Pay, issue #238)
+
+With `X402_ENABLED=true` the near-intents path is on by default (`X402_INTENTS_ENABLED`, default `true`) and uses [Ping Agent Pay](https://pingpay.gitbook.io/docs/pingpay-api/agent-pay-facilitator/x402-integration) as the facilitator. The unpaid 402 lists Ping's unquoted offers, one per origin (e.g. USDC on Arbitrum or Base, BTC, SOL), each with `extra.assetTransferMethod: "near-intents"`, `amount: ""` and `payTo: ""`. `extra.destination` comes from Ping (the Agent Pay settings in the Ping dashboard), so the receiving asset and NEAR recipient are not in this repo. nearmerch receives exactly the order total. The flow follows the upfront near-intents scheme ([x402 #3370](https://github.com/x402-foundation/x402/pull/3370)):
+
+1. **Quote.** Retry with a `PAYMENT-SIGNATURE` whose `accepted` is the unquoted entry and `payload` is `{"type":"quote","refundTo":"<your address on the origin chain>"}`. The server calls Ping `/verify` with its own copy of the offer and records the quote. You get a second 402 whose single entry has `payTo` = deposit address, `amount` = `amountIn`, and `extra.refundDeadline` / `extra.operationToken` (and `extra.depositMemo` when set). Nothing changes on the order.
+2. **Deposit.** Send exactly `amount` of the origin asset to `payTo` (with the memo, if any) before `refundDeadline`.
+3. **Settle.** Retry with `accepted` = the quoted entry and `payload` = `{"type":"deposit","operationToken","depositAddress","depositMemo"?,"txHash"}`. The server calls Ping `/settle` with the recorded destination terms.
+
+Responses to the deposit request:
+
+| Result | HTTP | What to do |
+| --- | --- | --- |
+| Paid | 200 + `PAYMENT-RESPONSE` (`network: "near:mainnet"`, NEAR tx hash, `extra.originTxHash`) | Done. The server also claims the challenge at Ping `/execution` (best effort). |
+| `settlement_pending` (also for `INCOMPLETE_DEPOSIT`) | 402 + `PAYMENT-RESPONSE` | Retry the **same** deposit payload later; for `extra.status: "INCOMPLETE_DEPOSIT"` top up the same address first. It stays valid until `refundDeadline` + 24 h, even past the 900 s quote window. New quotes are refused while one is pending. |
+| `exact_near_intents_payment_failed` | 402 + `PAYMENT-RESPONSE` (`extra.status: "REFUNDED"`, `extra.refundTo`) | The swap failed and funds were refunded on the origin chain. The order is `payment_failed`; start a new checkout. |
+| `invalid_exact_near_intents_*` (e.g. `deposit_not_found`) and other Ping errors | 402 | Nothing changed. Fix the payload (or wait for the deposit to land) and retry. |
+| `facilitator_unavailable` / `intents_unavailable` | 502 / 503 | Ping or the API was unavailable (Ping 503/504 included). Nothing changed; retry. |
+| Replay of a settled operation | 200, `idempotent: true`, `reason: exact_near_intents_operation_executed` | Already paid; the order is not paid or fulfilled twice. |
+
+Only fund one quote per order. A second funded quote is still delivered to the merchant and recorded as a duplicate for a manual refund.
+
+Fee splits (royalty, affiliate, referral) are recorded on the order and reconciled off-chain, as in Phase 1: Ping settles the full total to the dashboard recipient (Agent Pay charges no fee today).
+
+Environment (Ping is mainnet only; there is no near-intents testnet):
+
+```
+X402_ENABLED=true
+X402_HOST_SECRET=replace-me
+X402_INTENTS_ENABLED=true                  # default true; set false to serve Base exact only
+X402_INTENTS_FACILITATOR_URL=              # default https://pay.pingpay.io/agentpay/x402 (staging: https://staging.pingpay.io/agentpay/x402)
+X402_INTENTS_FACILITATOR_API_KEY=          # Ping API key (X-Api-Key); falls back to PING_API_KEY for a pingpay.io URL
+X402_INTENTS_ORIGINS=                      # optional allow-list, e.g. ["eip155:8453",{"network":"eip155:42161","asset":"0xaf88d065e77c8cC2239327C5EDb3A432268e5831"}]
+```
+
+In the Ping dashboard: turn on Agent Pay, set the asset you receive (USDC on NEAR) and the recipient, and create the API key. Design and facilitator decision: [ADR 0001](../docs/adr/0001-x402-near-intents-facilitator.md).
 
 ### curl
 

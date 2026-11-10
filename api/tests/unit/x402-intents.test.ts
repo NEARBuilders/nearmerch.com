@@ -122,6 +122,10 @@ describe('x402 near-intents config', () => {
 
   it('x402 checkout works without a Base pay-to when the intents path is configured', () => {
     expect(getX402CheckoutUnavailableReason()).toBeNull();
+    // No facilitator key: the host won't mount the pay route, so checkout must refuse too.
+    delete process.env.X402_INTENTS_FACILITATOR_API_KEY;
+    expect(getX402CheckoutUnavailableReason()).toMatch(/FACILITATOR_API_KEY/);
+    process.env.X402_INTENTS_FACILITATOR_API_KEY = 'key-123';
     process.env.X402_INTENTS_ENABLED = 'false';
     expect(getX402CheckoutUnavailableReason()).toMatch(/pay-to address/);
     process.env.X402_PAY_TO_ADDRESS = '0x0000000000000000000000000000000000000abc';

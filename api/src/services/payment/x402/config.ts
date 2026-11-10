@@ -218,12 +218,17 @@ export function isX402IntentsActive(): boolean {
 
 /**
  * Why an x402 order can't be created, or null. Base `exact` needs
- * X402_PAY_TO_ADDRESS; without it the intents path must be configured.
+ * X402_PAY_TO_ADDRESS; without it the intents path must be active (same check
+ * the host uses to mount POST /orders/:id/pay), so checkout never creates an
+ * order the pay route can't serve (e.g. facilitator key missing).
  */
 export function getX402CheckoutUnavailableReason(): string | null {
   if (!isX402Enabled()) return "x402 payments are not enabled";
-  if (!getX402PayToAddress() && !isX402IntentsConfigured()) {
-    return "x402 pay-to address is not configured and near-intents is off";
+  if (!getX402PayToAddress()) {
+    const inactive = getX402IntentsInactiveReason();
+    if (inactive) {
+      return `x402 pay-to address is not configured and near-intents is off (${inactive})`;
+    }
   }
   return null;
 }

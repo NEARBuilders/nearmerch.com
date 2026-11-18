@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.18.4
+
+### Patch Changes
+
+- 17541d3: Keep the selected product color and size in the URL (`?color=&size=`) so a variant link can be shared or refreshed.
+
 ## 1.18.3
 
 ### Patch Changes

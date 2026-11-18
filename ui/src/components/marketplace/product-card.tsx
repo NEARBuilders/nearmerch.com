@@ -31,6 +31,7 @@ import {
   sizeOptionSelection,
 } from "@/lib/product-utils";
 import { getLowestVariantPrice } from "@/lib/product-price";
+import { emptyProductRouteSearch } from "@/lib/product-route-search";
 import { toast } from "sonner";
 
 function getTotalFeePercentage(metadata: ProductMetadata | undefined): number {
@@ -320,6 +321,7 @@ function VerticalProductLayout({
         <Link
           to="/products/$productId"
           params={{ productId: product.slug }}
+          search={emptyProductRouteSearch}
           preload="intent"
           preloadDelay={0}
           className="block w-full h-full relative z-10"
@@ -403,6 +405,7 @@ function VerticalProductLayout({
           <Link
             to="/products/$productId"
             params={{ productId: product.slug }}
+            search={emptyProductRouteSearch}
             className="block pointer-events-auto"
             resetScroll={true}
           >
@@ -604,6 +607,7 @@ function HorizontalProductLayout({
         <Link
           to="/products/$productId"
           params={{ productId: product.slug }}
+          search={emptyProductRouteSearch}
           preload="intent"
           preloadDelay={0}
           className="block w-full h-full relative z-10"
@@ -633,6 +637,7 @@ function HorizontalProductLayout({
             <Link
               to="/products/$productId"
               params={{ productId: product.slug }}
+              search={emptyProductRouteSearch}
               className="block"
               resetScroll={true}
             >

@@ -98,11 +98,26 @@ describe("product page variant URL params", () => {
     );
   });
 
-  it("falls back to the default variant for invalid params", async () => {
+  it("falls back to the default variant for invalid params and rewrites the URL", async () => {
     mocks.search = { color: "Purple", size: "XXL" };
     await renderPage();
 
     expect(screen.getByRole("button", { name: /Add to Cart - \$30\.00/ })).toBeTruthy();
+    expect(mocks.navigate).toHaveBeenCalledWith({
+      search: { color: "Black", size: "M" },
+      replace: true,
+      resetScroll: false,
+    });
+  });
+
+  it("keeps an unavailable size unselected while the image and price follow the color", async () => {
+    mocks.search = { color: "White", size: "M" };
+    await renderPage();
+
+    expect(screen.getByText("2 / 2")).toBeTruthy();
+    const addToCart = screen.getByRole("button", { name: /Add to Cart - \$35\.00/ });
+    expect((addToCart as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.navigate).not.toHaveBeenCalled();
   });
 
   it("writes color and size changes to the URL with replace", async () => {

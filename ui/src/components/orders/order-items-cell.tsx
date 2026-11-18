@@ -6,6 +6,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { emptyProductRouteSearch } from "@/lib/product-route-search";
 
 export type OrderItemsCellItem = {
   productId: string;
@@ -33,6 +34,7 @@ function ProductLink({
     <Link
       to="/products/$productId"
       params={{ productId }}
+      search={emptyProductRouteSearch}
       className={cn(
         "cursor-pointer text-[#00EC97] hover:underline underline-offset-2 truncate",
         className,
@@ -129,6 +131,7 @@ export function OrderItemsCell({
                 <Link
                   to="/products/$productId"
                   params={{ productId: item.productId }}
+                  search={emptyProductRouteSearch}
                   className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-background/80 hover:text-[#00EC97] transition-colors"
                 >
                   <span className="truncate font-medium">{item.productName}</span>

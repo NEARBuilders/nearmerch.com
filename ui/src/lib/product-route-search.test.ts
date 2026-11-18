@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildProductShareUrl,
+  emptyProductRouteSearch,
   getProductVariantSearch,
   parseProductRouteSearch,
   resolveProductVariantSelection,
@@ -37,6 +39,22 @@ describe("parseProductRouteSearch", () => {
       ref: undefined,
     });
   });
+
+  it("keeps unrelated params such as campaign tags", () => {
+    expect(
+      parseProductRouteSearch({
+        color: "Black",
+        size: "M",
+        ref: "alice.near",
+        utm_source: "newsletter",
+      }),
+    ).toEqual({
+      color: "Black",
+      size: "M",
+      ref: "alice.near",
+      utm_source: "newsletter",
+    });
+  });
 });
 
 describe("resolveProductVariantSelection", () => {
@@ -62,6 +80,24 @@ describe("resolveProductVariantSelection", () => {
       resolveProductVariantSelection({
         ...shirt,
         search: { color: "Purple", size: "XXXL" },
+      }),
+    ).toEqual({ color: "Black", size: "M", requestedSize: "M" });
+  });
+
+  it("falls back to the default variant when only the color is unknown", () => {
+    expect(
+      resolveProductVariantSelection({
+        ...shirt,
+        search: { color: "Purple", size: "S" },
+      }),
+    ).toEqual({ color: "Black", size: "M", requestedSize: "M" });
+  });
+
+  it("falls back to the default variant when only the size is unknown", () => {
+    expect(
+      resolveProductVariantSelection({
+        ...shirt,
+        search: { color: "White", size: "XXXL" },
       }),
     ).toEqual({ color: "Black", size: "M", requestedSize: "M" });
   });
@@ -133,5 +169,48 @@ describe("getProductVariantSearch", () => {
         { color: "", size: "" },
       ),
     ).toEqual({ color: undefined, size: undefined });
+  });
+
+  it("keeps unrelated params when the selection changes", () => {
+    expect(
+      getProductVariantSearch(
+        { ref: "alice.near", utm_source: "newsletter" },
+        { color: "White", size: "S" },
+      ),
+    ).toEqual({
+      ref: "alice.near",
+      utm_source: "newsletter",
+      color: "White",
+      size: "S",
+    });
+  });
+});
+
+describe("product link helpers", () => {
+  it("clears variant and referral params and keeps campaign tags", () => {
+    expect(
+      emptyProductRouteSearch({
+        color: "Black",
+        size: "M",
+        ref: "alice.near",
+        utm_source: "newsletter",
+        category: "hoodies",
+      }),
+    ).toEqual({
+      color: undefined,
+      size: undefined,
+      ref: undefined,
+      utm_source: "newsletter",
+    });
+  });
+
+  it("includes the selected color and size in a referral share link", () => {
+    expect(
+      buildProductShareUrl("https://nearmerch.com", "near-tee", {
+        ref: "alice.near",
+        color: "White",
+        size: "S",
+      }),
+    ).toBe("https://nearmerch.com/products/near-tee?ref=alice.near&color=White&size=S");
   });
 });

@@ -32,6 +32,7 @@ import {
   createFileRoute,
   Link,
 } from "@tanstack/react-router";
+import { emptyProductRouteSearch } from "@/lib/product-route-search";
 import {
   ChevronLeft,
   ChevronRight,
@@ -797,6 +798,7 @@ function ProductCarousel() {
                 <Link
                   to="/products/$productId"
                   params={{ productId: item.slug }}
+                  search={emptyProductRouteSearch}
                   className="block group"
                 >
                   <div className="relative w-[calc(100vw-3rem)] max-w-[340px] h-[400px] rounded-2xl bg-background/60 backdrop-blur-sm border border-border/60 overflow-hidden transition-all duration-500 hover:border-[#00EC97] hover:shadow-xl">
@@ -881,6 +883,7 @@ function ProductCarousel() {
               <Link
                 to="/products/$productId"
                 params={{ productId: item.slug }}
+                search={emptyProductRouteSearch}
                 className="block group"
               >
                 <div className="relative w-[580px] lg:w-[680px] h-[650px] lg:h-[720px] rounded-2xl bg-background/60 backdrop-blur-sm border border-border/60 overflow-hidden transition-all duration-500 hover:border-[#00EC97] hover:shadow-xl">

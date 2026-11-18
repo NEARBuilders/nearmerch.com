@@ -29,6 +29,7 @@ import {
   sizeOptionSelection,
 } from "@/lib/product-utils";
 import {
+  buildProductShareUrl,
   getProductVariantSearch,
   parseProductRouteSearch,
   resolveProductVariantSelection,
@@ -81,6 +82,14 @@ function getTotalFeePercentage(metadata: ProductMetadata | undefined): number {
   if (!metadata?.fees?.length) return 0;
   const totalBps = metadata.fees.reduce((sum: number, fee: ProductMetadata["fees"][number]) => sum + fee.bps, 0);
   return totalBps / 100;
+}
+
+function findImageIndex(
+  images: Array<{ id?: string }>,
+  image: { id?: string } | undefined,
+) {
+  if (!image?.id) return -1;
+  return images.findIndex((item) => item.id === image.id);
 }
 
 function formatFeeType(type: string): string {
@@ -197,16 +206,6 @@ function ProductDetailPage() {
     normalizedRefAccountId !== normalizedNearAccountId
       ? normalizedRefAccountId
       : undefined;
-  const shareReferralUrl = useMemo(() => {
-    if (typeof window === "undefined" || !referralConfig || !normalizedNearAccountId) {
-      return null;
-    }
-
-    const url = new URL(`/products/${product.slug}`, window.location.origin);
-    url.searchParams.set("ref", normalizedNearAccountId);
-    return url.toString();
-  }, [normalizedNearAccountId, product.slug, referralConfig]);
-
   const purchaseGatePluginId = getPurchaseGatePluginId(
     metadata,
   );
@@ -235,6 +234,7 @@ function ProductDetailPage() {
     variants: availableVariants,
     search,
   });
+  const canonicalSize = selectedSize || requestedSize;
 
   const selectVariant = (selection: { color: string; size: string }) => {
     navigate({
@@ -243,6 +243,21 @@ function ProductDetailPage() {
       resetScroll: false,
     });
   };
+
+  useEffect(() => {
+    const colorNeedsRewrite = Boolean(search.color) && search.color !== selectedColor;
+    const sizeNeedsRewrite = Boolean(search.size) && search.size !== canonicalSize;
+    if (!colorNeedsRewrite && !sizeNeedsRewrite) return;
+
+    navigate({
+      search: getProductVariantSearch(search, {
+        color: selectedColor,
+        size: canonicalSize,
+      }),
+      replace: true,
+      resetScroll: false,
+    });
+  }, [canonicalSize, navigate, search, selectedColor]);
 
   const availableSizesForColor = getAvailableSizesForColor({
     sizes: orderedSizes,
@@ -258,8 +273,36 @@ function ProductDetailPage() {
     hasSizeOptions,
   });
 
-  const displayPrice = selectedVariant?.price || product.price;
+  const colorDisplayVariant =
+    selectedVariant || !selectedColor
+      ? undefined
+      : availableVariants.find(
+          (variant) =>
+            Boolean(variant.id) &&
+            variant.availableForSale !== false &&
+            getOptionValue(variant.attributes, "Color") === selectedColor,
+        );
+  const displayPrice = (selectedVariant ?? colorDisplayVariant)?.price || product.price;
   const selectedVariantId = selectedVariant?.id;
+  const imageVariantId = selectedVariantId ?? colorDisplayVariant?.id;
+
+  const shareReferralUrl = useMemo(() => {
+    if (typeof window === "undefined" || !referralConfig || !normalizedNearAccountId) {
+      return null;
+    }
+
+    return buildProductShareUrl(window.location.origin, product.slug, {
+      ref: normalizedNearAccountId,
+      color: selectedColor || undefined,
+      size: canonicalSize || undefined,
+    });
+  }, [
+    normalizedNearAccountId,
+    product.slug,
+    referralConfig,
+    selectedColor,
+    canonicalSize,
+  ]);
 
   const [quantity, setQuantity] = useState(1);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -309,20 +352,20 @@ function ProductDetailPage() {
   // Find variant-specific image for the selected variant
   const variantImage = useMemo(
     () =>
-      selectedVariantId
+      imageVariantId
         ? getVariantImage(
             { images: validImages, variants: availableVariants },
-            selectedVariantId
+            imageVariantId
           )
         : undefined,
-    [validImages, availableVariants, selectedVariantId]
+    [validImages, availableVariants, imageVariantId]
   );
 
-  const [currentImageIndex, setCurrentImageIndex] = useState(() =>
-    (search.color || search.size) && variantImage
-      ? Math.max(0, validImages.findIndex((img) => img.id === variantImage.id))
-      : 0
-  );
+  const [currentImageIndex, setCurrentImageIndex] = useState(() => {
+    if (!(search.color || search.size) || !variantImage) return 0;
+    const index = findImageIndex(validImages, variantImage);
+    return index === -1 ? 0 : index;
+  });
 
   const handleShareReferral = async () => {
     if (!referralConfig) {
@@ -368,9 +411,7 @@ function ProductDetailPage() {
       isInitialMountRef.current = false;
       prevColorSizeRef.current = { color: selectedColor, size: selectedSize };
       if ((search.color || search.size) && variantImage) {
-        const variantImageIndex = validImages.findIndex(
-          (img) => img.id === variantImage.id
-        );
+        const variantImageIndex = findImageIndex(validImages, variantImage);
         if (variantImageIndex !== -1) setCurrentImageIndex(variantImageIndex);
       }
       return;
@@ -385,9 +426,7 @@ function ProductDetailPage() {
       prevColorSizeRef.current.size !== selectedSize;
 
     if (!isManualImageSelection && variantImage && colorSizeChanged) {
-      const variantImageIndex = validImages.findIndex(
-        (img) => img.id === variantImage.id
-      );
+      const variantImageIndex = findImageIndex(validImages, variantImage);
       if (variantImageIndex !== -1 && variantImageIndex !== currentImageIndex) {
         setCurrentImageIndex(variantImageIndex);
       }

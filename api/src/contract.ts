@@ -15,6 +15,14 @@ import {
   X402PayOrderSchema,
   X402SettleInputSchema,
   X402FailInputSchema,
+  X402IntentsFailInputSchema,
+  X402IntentsFailOutputSchema,
+  X402IntentsOperationKeyInputSchema,
+  X402IntentsOperationSchema,
+  X402IntentsOrderContextSchema,
+  X402IntentsRecordQuoteInputSchema,
+  X402IntentsSettleInputSchema,
+  X402IntentsSettleOutputSchema,
   ProductMetadataSchema,
   SubscribeNewsletterInputSchema,
   SubscribeNewsletterOutputSchema,
@@ -621,6 +629,70 @@ export const contract = oc.router({
     })
     .input(X402FailInputSchema)
     .output(X402PayOrderSchema.nullable())
+    .errors({ NOT_FOUND, UNAUTHORIZED }),
+
+  getX402IntentsOrder: oc
+    .route({
+      method: "GET",
+      path: "/internal/x402/intents/orders/{orderId}",
+      summary: "Get an order and its fee splits for x402 near-intents",
+      description:
+        "Host-only helper used by POST /orders/{id}/pay to build near-intents requirements.",
+      tags: ["x402"],
+    })
+    .input(z.object({ orderId: z.string() }))
+    .output(X402IntentsOrderContextSchema.nullable())
+    .errors({ UNAUTHORIZED }),
+
+  recordX402IntentsQuote: oc
+    .route({
+      method: "POST",
+      path: "/internal/x402/intents/operations",
+      summary: "Record an x402 near-intents quote",
+      description:
+        "Host-only helper that records a facilitator quote (never the operation token) before it is returned to the client.",
+      tags: ["x402"],
+    })
+    .input(X402IntentsRecordQuoteInputSchema)
+    .output(X402IntentsOperationSchema)
+    .errors({ NOT_FOUND, BAD_REQUEST, UNAUTHORIZED }),
+
+  getX402IntentsOperation: oc
+    .route({
+      method: "POST",
+      path: "/internal/x402/intents/operations/lookup",
+      summary: "Look up an x402 near-intents operation",
+      description: "Host-only helper that returns a recorded near-intents operation by key.",
+      tags: ["x402"],
+    })
+    .input(X402IntentsOperationKeyInputSchema)
+    .output(X402IntentsOperationSchema.nullable())
+    .errors({ UNAUTHORIZED }),
+
+  settleX402IntentsOperation: oc
+    .route({
+      method: "POST",
+      path: "/internal/x402/intents/operations/settle",
+      summary: "Mark an x402 near-intents operation executed",
+      description:
+        "Host-only helper invoked after a successful near-intents settle; marks the order paid once.",
+      tags: ["x402"],
+    })
+    .input(X402IntentsSettleInputSchema)
+    .output(X402IntentsSettleOutputSchema)
+    .errors({ NOT_FOUND, BAD_REQUEST, UNAUTHORIZED }),
+
+  failX402IntentsOperation: oc
+    .route({
+      method: "POST",
+      path: "/internal/x402/intents/operations/fail",
+      summary: "Record a pending or failed x402 near-intents settle",
+      description:
+        "Host-only helper invoked when a near-intents settle is pending or terminally failed.",
+      tags: ["x402"],
+    })
+    .input(X402IntentsFailInputSchema)
+    .output(X402IntentsFailOutputSchema)
     .errors({ NOT_FOUND, UNAUTHORIZED }),
 
   updateProductListing: oc

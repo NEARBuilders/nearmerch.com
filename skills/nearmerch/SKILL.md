@@ -299,12 +299,24 @@ Don't retry `4xx` errors unchanged. Retry `5xx` errors on `GET` with backoff. Ne
 - If you see `settlement_pending`, wait and poll. Never pay twice.
 - Support: `orders@nearmerch.com`.
 
-## Planned: NEAR Intents payments
+## NEAR Intents payments (behind a flag, not live yet)
 
-Paying from NEAR or any chain through a NEAR Intents x402 facilitator is **not live yet**. The research and go/no-go decision are in ADR 0001: <https://github.com/NEARBuilders/nearmerch.com/blob/main/docs/adr/0001-x402-near-intents-facilitator.md> (tracking issue <https://github.com/NEARBuilders/nearmerch.com/issues/237>). Until it ships, the only agent-native payment method is x402 with USDC on Base.
+The pay route also supports x402 #3370 `exact` payments with `extra.assetTransferMethod: "near-intents"` through Ping Agent Pay, so you can pay from many chains and assets (for example USDC on Arbitrum or Base, BTC, SOL). The store receives USDC on NEAR. This is **off on nearmerch.com until the operators turn it on**. While it is off, the 402 has no `near-intents` entries and the steps below don't apply. When it is on:
+
+1. `POST /orders/{orderId}/pay` with no payment header. The 402 lists `near-intents` entries (one per origin) with empty `payTo` and `amount`, and `extra.destination` is what the store receives. If Base USDC `eip3009` is not in the list, intents is the only way to pay.
+2. Pick an entry and retry with a `PAYMENT-SIGNATURE` whose `accepted` is that entry and whose `payload` is `{ "type": "quote", "refundTo": "<your address on that origin chain>" }`. You get a second 402 with one quoted entry: `payTo` is a one-time deposit address, `amount` is the exact amount to send (it includes the slippage buffer and fees), and `extra` has `operationToken` and `refundDeadline`. A quote changes nothing on the order.
+3. Send exactly `amount` of `asset` to `payTo` on that network before `refundDeadline`. Fund **one** quote per order.
+4. Retry with `accepted` set to the quoted entry and `payload` set to `{ "type": "deposit", "operationToken": "...", "depositAddress": "<payTo>", "txHash": "<your deposit tx>" }`. Add `depositMemo` if the quote had one.
+   - `200` with a `PAYMENT-RESPONSE` header (`network: "near:mainnet"`) means paid.
+   - `402` with `error: "settlement_pending"` means the swap is still running, or the deposit was short (`extra.status: "INCOMPLETE_DEPOSIT"`, so top up the same address). Retry the **same** payload later. Never request a new quote while one is pending (`403 settlement_pending`).
+   - `402` with `exact_near_intents_payment_failed` is final: the funds are refunded to `refundTo`.
+   - `502` means the facilitator or the store was unavailable and nothing changed, so retry the same payload.
+
+A recorded quote stays redeemable after the 15-minute checkout window, so a slow swap still settles the order.
 
 ## More references
 
 - OpenAPI spec (every route and schema): `https://nearmerch.com/api/spec.json`
 - Agent payments (x402) guide for developers: <https://github.com/NEARBuilders/nearmerch.com/blob/main/api/README.md#agent-payments-x402>
+- Ping Agent Pay x402 facilitator: <https://pingpay.gitbook.io/docs/pingpay-api/agent-pay-facilitator/x402-integration>
 - Source: <https://github.com/NEARBuilders/nearmerch.com>

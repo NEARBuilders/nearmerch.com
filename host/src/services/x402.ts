@@ -6,8 +6,14 @@ import {
   getX402Network,
   getX402PayToAddress,
   isX402Enabled,
+  getX402IntentsInactiveReason,
+  isX402IntentsEnabled,
   X402_HOST_SECRET_HEADER,
 } from "../../../api/src/services/payment/x402/config.ts";
+import {
+  createX402IntentsPayDeps,
+  type X402IntentsPluginClient,
+} from "../../../api/src/services/payment/x402/intents/host-deps.ts";
 import type { PluginResult } from "./plugins";
 import { logger } from "../utils/logger";
 
@@ -51,16 +57,11 @@ type X402PluginClient = {
     expired: boolean;
     settlePending: boolean;
   } | null>;
-};
+} & X402IntentsPluginClient;
 
 export function setupX402PayRoute(app: Hono, plugins: PluginResult) {
+  // Master switch: nothing x402 is mounted unless X402_ENABLED is on.
   if (!isX402Enabled()) {
-    return;
-  }
-
-  const payTo = getX402PayToAddress();
-  if (!payTo) {
-    logger.warn("[x402] X402_ENABLED is set but X402_PAY_TO_ADDRESS is missing");
     return;
   }
 
@@ -82,6 +83,21 @@ export function setupX402PayRoute(app: Hono, plugins: PluginResult) {
   const reqHeaders = new Headers();
   reqHeaders.set(X402_HOST_SECRET_HEADER, hostSecret);
   const client = pluginApi.createClient({ reqHeaders });
+
+  // Base USDC exact (eip3009) only when a Base pay-to is configured, e.g. for
+  // dev on Base Sepolia. Near-intents (Ping Agent Pay) is on by default.
+  const payTo = getX402PayToAddress();
+  const intents = createX402IntentsPayDeps(client) ?? undefined;
+  if (!intents && isX402IntentsEnabled()) {
+    logger.warn(`[x402] near-intents disabled: ${getX402IntentsInactiveReason()}`);
+  }
+  if (!payTo && !intents) {
+    logger.warn(
+      "[x402] X402_ENABLED is set but neither X402_PAY_TO_ADDRESS nor near-intents is configured; skipping POST /orders/:id/pay",
+    );
+    return;
+  }
+
   const payApp = createX402PayApp({
     payTo,
     facilitatorUrl: getX402FacilitatorUrl(),
@@ -90,8 +106,17 @@ export function setupX402PayRoute(app: Hono, plugins: PluginResult) {
       client.settleX402Order({ orderId, ...settlement }),
     failOrder: (orderId, settlement) =>
       client.failX402Order({ orderId, ...settlement }),
+    intents,
   });
 
   app.route("/", payApp);
-  logger.info(`[x402] Mounted POST /orders/:id/pay (${getX402Network()})`);
+  const modes = [
+    payTo ? `exact ${getX402Network()}` : undefined,
+    intents
+      ? `near-intents via ${intents.facilitatorUrl}${
+          intents.origins ? ` (${intents.origins.length} allowed origin(s))` : ""
+        }`
+      : undefined,
+  ].filter(Boolean);
+  logger.info(`[x402] Mounted POST /orders/:id/pay (${modes.join(", ")})`);
 }

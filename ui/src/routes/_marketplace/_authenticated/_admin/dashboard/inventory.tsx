@@ -1,4 +1,5 @@
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { emptyProductRouteSearch } from "@/lib/product-route-search";
 import { Fragment, useState, useEffect, useMemo } from "react";
 import { DragDropProvider, DragOverlay } from "@dnd-kit/react";
 import { isSortable, useSortable } from "@dnd-kit/react/sortable";
@@ -1104,6 +1105,7 @@ function InventoryManagement() {
         <Link
           to="/products/$productId"
           params={{ productId: row.original.slug }}
+          search={emptyProductRouteSearch}
           className="block"
         >
           <div className="size-12 bg-muted border border-border/60 overflow-hidden rounded-lg group-hover:border-[#00EC97] group-hover:opacity-80 transition-all cursor-pointer">
@@ -1695,6 +1697,7 @@ function InventoryManagement() {
                     <Link
                       to="/products/$productId"
                       params={{ productId: product.slug }}
+                      search={emptyProductRouteSearch}
                       className="shrink-0"
                     >
                       <div className="size-16 bg-muted border border-border/60 overflow-hidden rounded-lg group-hover:border-[#00EC97] transition-colors">
@@ -1716,6 +1719,7 @@ function InventoryManagement() {
                         <Link
                           to="/products/$productId"
                           params={{ productId: product.slug }}
+                          search={emptyProductRouteSearch}
                           className="block min-w-0 flex-1"
                         >
                           <p className="font-medium text-sm text-foreground/90 dark:text-muted-foreground truncate hover:text-[#00EC97] dark:hover:text-[#00EC97] transition-colors">

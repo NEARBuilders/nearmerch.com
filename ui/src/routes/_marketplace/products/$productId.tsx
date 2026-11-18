@@ -21,16 +21,19 @@ import {
   findVariantForSelection,
   getAvailableSizesForColor,
   getAttributeHex,
-  getInitialSizeForColor,
   getOptionValue,
   getUnavailableVariantMessage,
   getVariantImage,
   getVariantImageUrl,
   hasSelectableSizes,
-  resolveSelectedSizeForColor,
-  sizeAfterColorChange,
   sizeOptionSelection,
 } from "@/lib/product-utils";
+import {
+  buildProductShareUrl,
+  getProductVariantSearch,
+  parseProductRouteSearch,
+  resolveProductVariantSelection,
+} from "@/lib/product-route-search";
 import {
   absoluteUrl,
   buildProductDescription,
@@ -81,6 +84,14 @@ function getTotalFeePercentage(metadata: ProductMetadata | undefined): number {
   return totalBps / 100;
 }
 
+function findImageIndex(
+  images: Array<{ id?: string }>,
+  image: { id?: string } | undefined,
+) {
+  if (!image?.id) return -1;
+  return images.findIndex((item) => item.id === image.id);
+}
+
 function formatFeeType(type: string): string {
   switch (type) {
     case "royalty": return "Creator Royalty";
@@ -93,6 +104,8 @@ function formatFeeType(type: string): string {
 
 export const Route = createFileRoute("/_marketplace/products/$productId")({
   pendingComponent: LoadingSpinner,
+  validateSearch: parseProductRouteSearch,
+  shouldReload: ({ cause }) => cause !== "stay",
   loader: async ({ params, context }) => {
     const siteUrl = context.runtimeConfig?.hostUrl ?? '';
     const assetsUrl = context.assetsUrl ?? '';
@@ -170,6 +183,8 @@ function ProductDetailPage() {
   const openCartSidebar = useCartSidebarStore((state) => state.open);
 
   const loaderData = Route.useLoaderData();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
 
   const { product } = loaderData.data;
 
@@ -191,16 +206,6 @@ function ProductDetailPage() {
     normalizedRefAccountId !== normalizedNearAccountId
       ? normalizedRefAccountId
       : undefined;
-  const shareReferralUrl = useMemo(() => {
-    if (typeof window === "undefined" || !referralConfig || !normalizedNearAccountId) {
-      return null;
-    }
-
-    const url = new URL(`/products/${product.slug}`, window.location.origin);
-    url.searchParams.set("ref", normalizedNearAccountId);
-    return url.toString();
-  }, [normalizedNearAccountId, product.slug, referralConfig]);
-
   const purchaseGatePluginId = getPurchaseGatePluginId(
     metadata,
   );
@@ -219,17 +224,40 @@ function ProductDetailPage() {
   const orderedSizes = sizeOption?.values || [];
   const orderedColors = colorOption?.values || [];
 
-  const defaultColor = orderedColors[0] || "";
-  const sizesForDefaultColor = getAvailableSizesForColor({
+  const {
+    color: selectedColor,
+    size: selectedSize,
+    requestedSize,
+  } = resolveProductVariantSelection({
+    colors: orderedColors,
     sizes: orderedSizes,
     variants: availableVariants,
-    selectedColor: defaultColor,
-    hasColorOptions: orderedColors.length > 0,
+    search,
   });
-  const defaultSize = getInitialSizeForColor(sizesForDefaultColor);
+  const canonicalSize = selectedSize || requestedSize;
 
-  const [selectedColor, setSelectedColor] = useState<string>(defaultColor);
-  const [selectedSize, setSelectedSize] = useState<string>(defaultSize);
+  const selectVariant = (selection: { color: string; size: string }) => {
+    navigate({
+      search: getProductVariantSearch(search, selection),
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
+  useEffect(() => {
+    const colorNeedsRewrite = Boolean(search.color) && search.color !== selectedColor;
+    const sizeNeedsRewrite = Boolean(search.size) && search.size !== canonicalSize;
+    if (!colorNeedsRewrite && !sizeNeedsRewrite) return;
+
+    navigate({
+      search: getProductVariantSearch(search, {
+        color: selectedColor,
+        size: canonicalSize,
+      }),
+      replace: true,
+      resetScroll: false,
+    });
+  }, [canonicalSize, navigate, search, selectedColor]);
 
   const availableSizesForColor = getAvailableSizesForColor({
     sizes: orderedSizes,
@@ -237,26 +265,48 @@ function ProductDetailPage() {
     selectedColor,
     hasColorOptions: orderedColors.length > 0,
   });
-  const effectiveSelectedSize = resolveSelectedSizeForColor(
-    selectedSize,
-    availableSizesForColor
-  );
-
   const hasSizeOptions = hasSelectableSizes(orderedSizes);
   const selectedVariant = findVariantForSelection(availableVariants, {
     selectedColor,
-    selectedSize: effectiveSelectedSize,
+    selectedSize,
     hasColorOptions: orderedColors.length > 0,
     hasSizeOptions,
   });
 
-  const displayPrice = selectedVariant?.price || product.price;
+  const colorDisplayVariant =
+    selectedVariant || !selectedColor
+      ? undefined
+      : availableVariants.find(
+          (variant) =>
+            Boolean(variant.id) &&
+            variant.availableForSale !== false &&
+            getOptionValue(variant.attributes, "Color") === selectedColor,
+        );
+  const displayPrice = (selectedVariant ?? colorDisplayVariant)?.price || product.price;
   const selectedVariantId = selectedVariant?.id;
+  const imageVariantId = selectedVariantId ?? colorDisplayVariant?.id;
+
+  const shareReferralUrl = useMemo(() => {
+    if (typeof window === "undefined" || !referralConfig || !normalizedNearAccountId) {
+      return null;
+    }
+
+    return buildProductShareUrl(window.location.origin, product.slug, {
+      ref: normalizedNearAccountId,
+      color: selectedColor || undefined,
+      size: canonicalSize || undefined,
+    });
+  }, [
+    normalizedNearAccountId,
+    product.slug,
+    referralConfig,
+    selectedColor,
+    canonicalSize,
+  ]);
 
   const [quantity, setQuantity] = useState(1);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerImageIndex, setViewerImageIndex] = useState(0);
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isManualImageSelection, setIsManualImageSelection] = useState(false);
   
   // Track previous color/size to detect actual changes (not initial mount)
@@ -302,14 +352,20 @@ function ProductDetailPage() {
   // Find variant-specific image for the selected variant
   const variantImage = useMemo(
     () =>
-      selectedVariantId
+      imageVariantId
         ? getVariantImage(
             { images: validImages, variants: availableVariants },
-            selectedVariantId
+            imageVariantId
           )
         : undefined,
-    [validImages, availableVariants, selectedVariantId]
+    [validImages, availableVariants, imageVariantId]
   );
+
+  const [currentImageIndex, setCurrentImageIndex] = useState(() => {
+    if (!(search.color || search.size) || !variantImage) return 0;
+    const index = findImageIndex(validImages, variantImage);
+    return index === -1 ? 0 : index;
+  });
 
   const handleShareReferral = async () => {
     if (!referralConfig) {
@@ -342,25 +398,22 @@ function ProductDetailPage() {
 
   // Reset image index when product changes
   useEffect(() => {
-    setSelectedColor(defaultColor);
-    setSelectedSize(defaultSize);
     setCurrentImageIndex(0);
     setIsManualImageSelection(false);
     isInitialMountRef.current = true;
     prevColorSizeRef.current = null;
-  }, [defaultColor, defaultSize, product.id]);
-
-  useEffect(() => {
-    const nextSize = sizeAfterColorChange(selectedSize, availableSizesForColor);
-    if (nextSize !== selectedSize) setSelectedSize(nextSize);
-  }, [selectedSize, availableSizesForColor]);
+  }, [product.id]);
 
   // When color/variant changes via color picker (not thumbnail click), update main image
   useEffect(() => {
-    // Skip on initial mount - always start with first image
+    // On initial mount start with the first image unless the URL picked a variant
     if (isInitialMountRef.current) {
       isInitialMountRef.current = false;
       prevColorSizeRef.current = { color: selectedColor, size: selectedSize };
+      if ((search.color || search.size) && variantImage) {
+        const variantImageIndex = findImageIndex(validImages, variantImage);
+        if (variantImageIndex !== -1) setCurrentImageIndex(variantImageIndex);
+      }
       return;
     }
 
@@ -373,9 +426,7 @@ function ProductDetailPage() {
       prevColorSizeRef.current.size !== selectedSize;
 
     if (!isManualImageSelection && variantImage && colorSizeChanged) {
-      const variantImageIndex = validImages.findIndex(
-        (img) => img.id === variantImage.id
-      );
+      const variantImageIndex = findImageIndex(validImages, variantImage);
       if (variantImageIndex !== -1 && variantImageIndex !== currentImageIndex) {
         setCurrentImageIndex(variantImageIndex);
       }
@@ -402,9 +453,9 @@ function ProductDetailPage() {
     if (!selectedVariant) {
       toast.error(
         getUnavailableVariantMessage({
-          selectedSize,
+          selectedSize: requestedSize,
           selectedColor,
-          effectiveSelectedSize,
+          effectiveSelectedSize: selectedSize,
           availableSizesForColor,
           hasSizeOptions,
         }),
@@ -412,7 +463,7 @@ function ProductDetailPage() {
       return;
     }
     const variantImageUrl = selectedVariantId ? getVariantImageUrl(product, selectedVariantId) : undefined;
-    const cartSize = getOptionValue(selectedVariant.attributes, "Size") || effectiveSelectedSize;
+    const cartSize = getOptionValue(selectedVariant.attributes, "Size") || selectedSize;
     const cartColor = getOptionValue(selectedVariant.attributes, "Color") || selectedColor;
     for (let i = 0; i < quantity; i++) {
       addToCart(
@@ -640,7 +691,7 @@ function ProductDetailPage() {
                             
                             const variantColor = getOptionValue(preferredVariant.attributes, "Color");
                             if (variantColor && orderedColors.includes(variantColor)) {
-                              setSelectedColor(variantColor);
+                              selectVariant({ color: variantColor, size: requestedSize });
                             }
                           }
                         }
@@ -777,7 +828,7 @@ function ProductDetailPage() {
                         key={color}
                         onClick={() => {
                           setIsManualImageSelection(false);
-                          setSelectedColor(color);
+                          selectVariant({ color, size: requestedSize });
                         }}
                         className={cn(
                             "size-10 rounded-lg border-2 transition-colors overflow-hidden",
@@ -803,7 +854,7 @@ function ProductDetailPage() {
                 <div className="flex flex-wrap gap-2">
                   {orderedSizes.map((size) => {
                     const isAvailable = availableSizesForColor.includes(size);
-                    const isSelected = isAvailable && size === effectiveSelectedSize;
+                    const isSelected = isAvailable && size === selectedSize;
 
                     return (
                       <button
@@ -818,7 +869,7 @@ function ProductDetailPage() {
                             toast.error(selection.error);
                             return;
                           }
-                          setSelectedSize(selection.size);
+                          selectVariant({ color: selectedColor, size: selection.size });
                         }}
                         className={cn(
                             "px-5 py-2.5 tracking-[-0.48px] transition-all rounded-lg font-medium text-sm border-2",

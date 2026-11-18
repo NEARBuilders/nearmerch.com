@@ -67,7 +67,7 @@ export function getAttributeHex(
   return (attr as unknown as { hex?: string })?.hex;
 }
 
-interface VariantWithOptions {
+export interface VariantWithOptions {
   id?: string;
   attributes?: Array<{ name: string; value: string }> | null;
   availableForSale?: boolean;
